@@ -4,19 +4,22 @@ import { trackOpenAI } from "../src/index.js";
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("trackOpenAI", () => {
-  const originalEnv = process.env.TOKVERA_INGEST_URL;
+  const originalIngestUrl = process.env.TOKVERA_INGEST_URL;
+  const originalApiKey = process.env.TOKVERA_API_KEY;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true }) as any;
-    process.env.TOKVERA_INGEST_URL = "https://ingest.example.test";
+    process.env.TOKVERA_INGEST_URL = "https://ingest.example.test/v1/events";
+    process.env.TOKVERA_API_KEY = "env_api_key";
   });
 
   afterEach(() => {
-    process.env.TOKVERA_INGEST_URL = originalEnv;
+    process.env.TOKVERA_INGEST_URL = originalIngestUrl;
+    process.env.TOKVERA_API_KEY = originalApiKey;
   });
 
-  it("proxies chat.completions.create and emits an event", async () => {
+  it("proxies chat.completions.create and emits a unified success event", async () => {
     const response = {
       id: "chat_1",
       model: "gpt-4o-mini",
@@ -33,7 +36,11 @@ describe("trackOpenAI", () => {
       },
     };
 
-    const tracked = trackOpenAI(openaiClient, { feature: "checkout" });
+    const tracked = trackOpenAI(openaiClient, {
+      feature: "checkout",
+      tenant_id: "tenant_1",
+      api_key: "project_key_123",
+    });
     const result = await tracked.chat.completions.create({ messages: [] });
 
     expect(result).toBe(response);
@@ -44,12 +51,19 @@ describe("trackOpenAI", () => {
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     const [, init] = (globalThis.fetch as any).mock.calls[0];
     const event = JSON.parse(init.body);
+
+    expect(init.headers.authorization).toBe("Bearer project_key_123");
+    expect(event.schema_version).toBe("2026-02-16");
+    expect(event.provider).toBe("openai");
+    expect(event.event_type).toBe("openai.request");
     expect(event.endpoint).toBe("chat.completions.create");
+    expect(event.status).toBe("success");
     expect(event.usage.total_tokens).toBe(8);
     expect(event.tags.feature).toBe("checkout");
+    expect(event.tags.tenant_id).toBe("tenant_1");
   });
 
-  it("proxies responses.create and emits an event", async () => {
+  it("proxies responses.create and emits a unified success event", async () => {
     const response = {
       id: "resp_1",
       model: "gpt-4o-mini",
@@ -77,12 +91,45 @@ describe("trackOpenAI", () => {
     expect(globalThis.fetch).toHaveBeenCalledOnce();
     const [, init] = (globalThis.fetch as any).mock.calls[0];
     const event = JSON.parse(init.body);
+
+    expect(init.headers.authorization).toBe("Bearer env_api_key");
     expect(event.endpoint).toBe("responses.create");
+    expect(event.status).toBe("success");
     expect(event.usage.completion_tokens).toBe(4);
     expect(event.tags.environment).toBe("test");
   });
 
-  it("does not emit when TOKVERA_INGEST_URL is not set", async () => {
+  it("emits failure event and rethrows when OpenAI call fails", async () => {
+    const openaiClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("openai failure")),
+        },
+      },
+      responses: {
+        create: vi.fn(),
+      },
+    };
+
+    const tracked = trackOpenAI(openaiClient, { feature: "billing" });
+
+    await expect(tracked.chat.completions.create({ messages: [] })).rejects.toThrow(
+      "openai failure"
+    );
+
+    await flushPromises();
+
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    const [, init] = (globalThis.fetch as any).mock.calls[0];
+    const event = JSON.parse(init.body);
+
+    expect(event.endpoint).toBe("chat.completions.create");
+    expect(event.status).toBe("failure");
+    expect(event.error.message).toBe("openai failure");
+    expect(event.usage.total_tokens).toBe(0);
+  });
+
+  it("does not emit when ingestion URL is not set", async () => {
     process.env.TOKVERA_INGEST_URL = "";
     const response = { id: "chat_2" };
     const openaiClient = {

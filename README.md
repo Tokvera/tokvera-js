@@ -16,6 +16,7 @@ import { trackOpenAI } from "@tokvera/sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const tracked = trackOpenAI(openai, {
+  api_key: "tokvera_project_key",
   feature: "onboarding",
   tenant_id: "tenant_123",
   customer_id: "cust_456",
@@ -39,22 +40,30 @@ const response = await tracked.responses.create({
 
 ## Configuration
 
-Set the ingestion endpoint:
+Set ingestion endpoint and API key:
 
 ```bash
-export TOKVERA_INGEST_URL="https://your-ingest-host/v1/ingest"
+export TOKVERA_INGEST_URL="https://your-ingest-host/v1/events"
+export TOKVERA_API_KEY="tokvera_project_key"
 ```
 
-If the ingestion endpoint is missing or fails, the SDK will not throw and will not block OpenAI responses.
+Per-client config in `trackOpenAI(..., options)` overrides env vars.
+
+If ingestion fails, the SDK will not throw and will not block OpenAI responses.
 
 ## Event Schema
 
 Events include:
+- `schema_version`: `2026-02-16`
+- `event_type`: `openai.request`
+- `provider`: `openai`
 - `endpoint`: `chat.completions.create` or `responses.create`
+- `status`: `success` or `failure`
 - `latency_ms`
 - `model`
-- `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens` (when available)
+- `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens`
 - `tags`: any of `feature`, `tenant_id`, `customer_id`, `plan`, `environment`, `template_id`
+- `error` on failure events
 
 ## Build & Test
 
