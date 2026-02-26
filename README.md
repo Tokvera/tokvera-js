@@ -43,7 +43,7 @@ const response = await tracked.responses.create({
 Set ingestion endpoint and API key:
 
 ```bash
-export TOKVERA_INGEST_URL="https://your-ingest-host/v1/events"
+export TOKVERA_INGEST_URL="https://api.tokvera.com/v1/events"
 export TOKVERA_API_KEY="tokvera_project_key"
 ```
 
@@ -52,6 +52,8 @@ Per-client config in `trackOpenAI(..., options)` overrides env vars.
 If ingestion fails, the SDK will not throw and will not block OpenAI responses.
 
 ## Event Schema
+
+Canonical specification: [`tokvera-api/docs/EVENT_SCHEMA.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/EVENT_SCHEMA.md)
 
 Events include:
 - `schema_version`: `2026-02-16`
