@@ -1,5 +1,8 @@
 import {
+  type AnthropicTrackEvent,
+  type GeminiTrackEvent,
   type OpenAITrackEvent,
+  type TrackEvent,
   type TrackOptions,
   type TrackTags,
   type Usage,
@@ -22,14 +25,69 @@ type OpenAIClientShape = {
   };
 };
 
+type AnthropicClientShape = {
+  messages: {
+    create: AnyFunction;
+  };
+};
+
+type GeminiClientShape = {
+  models: {
+    generateContent?: AnyFunction;
+    generate_content?: AnyFunction;
+  };
+};
+
+type EventContract = {
+  provider: TrackEvent["provider"];
+  event_type: TrackEvent["event_type"];
+  endpoint: TrackEvent["endpoint"];
+  usageFromResponse: (response: any) => Usage;
+  modelFromResponse?: (response: any) => string | undefined;
+};
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const getUsage = (response: any): Usage => {
+const toNonNegativeInt = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.trunc(parsed);
+};
+
+const getOpenAIUsage = (response: any): Usage => {
   const usage = response?.usage;
   return {
-    prompt_tokens: Number(usage?.prompt_tokens ?? 0),
-    completion_tokens: Number(usage?.completion_tokens ?? 0),
-    total_tokens: Number(usage?.total_tokens ?? 0),
+    prompt_tokens: toNonNegativeInt(usage?.prompt_tokens),
+    completion_tokens: toNonNegativeInt(usage?.completion_tokens),
+    total_tokens: toNonNegativeInt(usage?.total_tokens),
+  };
+};
+
+const getAnthropicUsage = (response: any): Usage => {
+  const usage = response?.usage;
+  const promptTokens = toNonNegativeInt(usage?.input_tokens ?? usage?.prompt_tokens);
+  const completionTokens = toNonNegativeInt(usage?.output_tokens ?? usage?.completion_tokens);
+  const totalTokens = toNonNegativeInt(usage?.total_tokens ?? promptTokens + completionTokens);
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  };
+};
+
+const getGeminiUsage = (response: any): Usage => {
+  const usage = response?.usageMetadata ?? response?.usage_metadata ?? {};
+  const promptTokens = toNonNegativeInt(usage?.promptTokenCount ?? usage?.prompt_token_count);
+  const completionTokens = toNonNegativeInt(
+    usage?.candidatesTokenCount ?? usage?.candidates_token_count ?? usage?.completion_token_count
+  );
+  const totalTokens = toNonNegativeInt(usage?.totalTokenCount ?? usage?.total_token_count ?? promptTokens + completionTokens);
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
   };
 };
 
@@ -42,23 +100,32 @@ const getTags = (options: TrackOptions): TrackTags => ({
   template_id: options.template_id,
 });
 
+const extractModelFromArgs = (args: any[]): string | undefined => {
+  const first = args[0];
+  if (first && typeof first === "object" && typeof first.model === "string" && first.model.length > 0) {
+    return first.model;
+  }
+  return undefined;
+};
+
 const buildEvent = (
-  endpoint: OpenAITrackEvent["endpoint"],
+  contract: EventContract,
   latencyMs: number,
   response: any,
+  modelHint: string | undefined,
   tags: TrackTags,
-  status: OpenAITrackEvent["status"],
+  status: TrackEvent["status"],
   error?: Error
-): OpenAITrackEvent => ({
+): TrackEvent => ({
   schema_version: "2026-02-16",
-  event_type: "openai.request",
-  provider: "openai",
-  endpoint,
+  event_type: contract.event_type,
+  provider: contract.provider,
+  endpoint: contract.endpoint,
   status,
   timestamp: new Date().toISOString(),
   latency_ms: latencyMs,
-  model: response?.model,
-  usage: getUsage(response),
+  model: contract.modelFromResponse?.(response) ?? modelHint,
+  usage: contract.usageFromResponse(response),
   tags,
   error:
     status === "failure"
@@ -67,9 +134,9 @@ const buildEvent = (
           message: error?.message,
         }
       : undefined,
-});
+} as TrackEvent);
 
-const sendWithRetry = async (event: OpenAITrackEvent, options: TrackOptions) => {
+const sendWithRetry = async (event: TrackEvent, options: TrackOptions) => {
   const url = options.ingest_url ?? options.ingestUrl ?? process.env.TOKVERA_INGEST_URL;
   if (!url) return;
 
@@ -107,23 +174,25 @@ const sendWithRetry = async (event: OpenAITrackEvent, options: TrackOptions) => 
 
 const wrapCreate = (
   originalCreate: AnyFunction,
-  endpoint: OpenAITrackEvent["endpoint"],
+  contract: EventContract,
   options: TrackOptions
 ) => {
   return async (...args: any[]) => {
     const start = Date.now();
+    const modelHint = extractModelFromArgs(args);
     try {
       const response = await originalCreate(...args);
       const latencyMs = Date.now() - start;
-      const event = buildEvent(endpoint, latencyMs, response, getTags(options), "success");
+      const event = buildEvent(contract, latencyMs, response, modelHint, getTags(options), "success");
       void sendWithRetry(event, options);
       return response;
     } catch (error) {
       const latencyMs = Date.now() - start;
       const event = buildEvent(
-        endpoint,
+        contract,
         latencyMs,
         undefined,
+        modelHint,
         getTags(options),
         "failure",
         error as Error
@@ -147,16 +216,105 @@ export const trackOpenAI = <T extends OpenAIClientShape>(
     ...openaiClient.chat,
     completions: {
       ...openaiClient.chat.completions,
-      create: wrapCreate(chatCreate, "chat.completions.create", options),
+      create: wrapCreate(
+        chatCreate,
+        {
+          provider: "openai",
+          event_type: "openai.request",
+          endpoint: "chat.completions.create",
+          usageFromResponse: getOpenAIUsage,
+          modelFromResponse: (response) => response?.model,
+        },
+        options
+      ),
     },
   } as T["chat"];
 
   wrapper.responses = {
     ...openaiClient.responses,
-    create: wrapCreate(responsesCreate, "responses.create", options),
+    create: wrapCreate(
+      responsesCreate,
+      {
+        provider: "openai",
+        event_type: "openai.request",
+        endpoint: "responses.create",
+        usageFromResponse: getOpenAIUsage,
+        modelFromResponse: (response) => response?.model,
+      },
+      options
+    ),
   } as T["responses"];
 
   return wrapper;
 };
 
-export type { OpenAITrackEvent, TrackOptions, TrackTags, Usage } from "./types.js";
+export const trackAnthropic = <T extends AnthropicClientShape>(
+  anthropicClient: T,
+  options: TrackOptions = {}
+): T => {
+  const wrapper = Object.create(anthropicClient) as T;
+  const messagesCreate = anthropicClient.messages.create.bind(anthropicClient.messages);
+
+  wrapper.messages = {
+    ...anthropicClient.messages,
+    create: wrapCreate(
+      messagesCreate,
+      {
+        provider: "anthropic",
+        event_type: "anthropic.request",
+        endpoint: "messages.create",
+        usageFromResponse: getAnthropicUsage,
+        modelFromResponse: (response) => response?.model,
+      },
+      options
+    ),
+  } as T["messages"];
+
+  return wrapper;
+};
+
+export const trackGemini = <T extends GeminiClientShape>(
+  geminiClient: T,
+  options: TrackOptions = {}
+): T => {
+  const wrapper = Object.create(geminiClient) as T;
+  const models = geminiClient.models || ({} as T["models"]);
+
+  const nextModels = {
+    ...models,
+  } as GeminiClientShape["models"];
+
+  const contract: EventContract = {
+    provider: "gemini",
+    event_type: "gemini.request",
+    endpoint: "models.generate_content",
+    usageFromResponse: getGeminiUsage,
+    modelFromResponse: (response) =>
+      response?.model ?? response?.modelVersion ?? response?.model_version,
+  };
+
+  if (typeof models.generateContent === "function") {
+    nextModels.generateContent = wrapCreate(models.generateContent.bind(models), contract, options);
+  }
+
+  if (typeof models.generate_content === "function") {
+    nextModels.generate_content = wrapCreate(models.generate_content.bind(models), contract, options);
+  }
+
+  if (!nextModels.generateContent && !nextModels.generate_content) {
+    throw new Error("Gemini client must expose models.generateContent or models.generate_content.");
+  }
+
+  wrapper.models = nextModels as T["models"];
+  return wrapper;
+};
+
+export type {
+  AnthropicTrackEvent,
+  GeminiTrackEvent,
+  OpenAITrackEvent,
+  TrackEvent,
+  TrackOptions,
+  TrackTags,
+  Usage,
+} from "./types.js";

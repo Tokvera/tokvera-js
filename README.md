@@ -1,6 +1,6 @@
 # @tokvera/sdk
 
-Tokvera TypeScript SDK to track OpenAI `chat.completions.create` and `responses.create` calls with latency and token usage.
+Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency and token usage telemetry.
 
 ## Install
 
@@ -9,6 +9,8 @@ npm install @tokvera/sdk
 ```
 
 ## Usage
+
+### OpenAI
 
 ```ts
 import OpenAI from "openai";
@@ -38,6 +40,45 @@ const response = await tracked.responses.create({
 });
 ```
 
+### Anthropic
+
+```ts
+import Anthropic from "@anthropic-ai/sdk";
+import { trackAnthropic } from "@tokvera/sdk";
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const tracked = trackAnthropic(anthropic, {
+  api_key: "tokvera_project_key",
+  feature: "support_bot",
+  tenant_id: "tenant_123",
+});
+
+await tracked.messages.create({
+  model: "claude-3-5-sonnet-latest",
+  max_tokens: 256,
+  messages: [{ role: "user", content: "Hello" }],
+});
+```
+
+### Gemini
+
+```ts
+import { GoogleGenAI } from "@google/genai";
+import { trackGemini } from "@tokvera/sdk";
+
+const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const tracked = trackGemini(gemini, {
+  api_key: "tokvera_project_key",
+  feature: "assistant",
+  tenant_id: "tenant_123",
+});
+
+await tracked.models.generateContent({
+  model: "gemini-2.0-flash",
+  contents: "Hello",
+});
+```
+
 ## Configuration
 
 Set ingestion endpoint and API key:
@@ -47,7 +88,7 @@ export TOKVERA_INGEST_URL="https://api.tokvera.com/v1/events"
 export TOKVERA_API_KEY="tokvera_project_key"
 ```
 
-Per-client config in `trackOpenAI(..., options)` overrides env vars.
+Per-client config in `trackOpenAI(...)`, `trackAnthropic(...)`, or `trackGemini(...)` overrides env vars.
 
 If ingestion fails, the SDK will not throw and will not block OpenAI responses.
 
@@ -57,9 +98,9 @@ Canonical specification: [`tokvera-api/docs/EVENT_SCHEMA.md`](https://github.com
 
 Events include:
 - `schema_version`: `2026-02-16`
-- `event_type`: `openai.request`
-- `provider`: `openai`
-- `endpoint`: `chat.completions.create` or `responses.create`
+- `event_type`: `openai.request`, `anthropic.request`, or `gemini.request`
+- `provider`: `openai`, `anthropic`, or `gemini`
+- `endpoint`: `chat.completions.create`, `responses.create`, `messages.create`, `models.generate_content`
 - `status`: `success` or `failure`
 - `latency_ms`
 - `model`

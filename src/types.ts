@@ -25,11 +25,8 @@ export type TrackError = {
   message?: string;
 };
 
-export type OpenAITrackEvent = {
+type BaseTrackEvent = {
   schema_version: "2026-02-16";
-  event_type: "openai.request";
-  provider: "openai";
-  endpoint: "chat.completions.create" | "responses.create";
   status: "success" | "failure";
   timestamp: string;
   latency_ms: number;
@@ -40,3 +37,23 @@ export type OpenAITrackEvent = {
   response_hash?: string;
   error?: TrackError;
 };
+
+export type OpenAITrackEvent = BaseTrackEvent & {
+  event_type: "openai.request";
+  provider: "openai";
+  endpoint: "chat.completions.create" | "responses.create";
+};
+
+export type AnthropicTrackEvent = BaseTrackEvent & {
+  event_type: "anthropic.request";
+  provider: "anthropic";
+  endpoint: "messages.create";
+};
+
+export type GeminiTrackEvent = BaseTrackEvent & {
+  event_type: "gemini.request";
+  provider: "gemini";
+  endpoint: "models.generate_content";
+};
+
+export type TrackEvent = OpenAITrackEvent | AnthropicTrackEvent | GeminiTrackEvent;
