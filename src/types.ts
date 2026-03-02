@@ -2,6 +2,7 @@ export type TrackTags = {
   feature?: string;
   tenant_id?: string;
   customer_id?: string;
+  attempt_type?: string;
   plan?: string;
   environment?: string;
   template_id?: string;

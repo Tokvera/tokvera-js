@@ -95,6 +95,7 @@ const getTags = (options: TrackOptions): TrackTags => ({
   feature: options.feature,
   tenant_id: options.tenant_id,
   customer_id: options.customer_id,
+  attempt_type: options.attempt_type,
   plan: options.plan,
   environment: options.environment,
   template_id: options.template_id,

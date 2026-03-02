@@ -39,6 +39,7 @@ describe("trackOpenAI", () => {
     const tracked = trackOpenAI(openaiClient, {
       feature: "checkout",
       tenant_id: "tenant_1",
+      attempt_type: "regenerate",
       api_key: "project_key_123",
     });
     const result = await tracked.chat.completions.create({ messages: [] });
@@ -61,6 +62,7 @@ describe("trackOpenAI", () => {
     expect(event.usage.total_tokens).toBe(8);
     expect(event.tags.feature).toBe("checkout");
     expect(event.tags.tenant_id).toBe("tenant_1");
+    expect(event.tags.attempt_type).toBe("regenerate");
   });
 
   it("proxies responses.create and emits a unified success event", async () => {

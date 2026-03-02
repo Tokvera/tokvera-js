@@ -105,7 +105,7 @@ Events include:
 - `latency_ms`
 - `model`
 - `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `tags`: any of `feature`, `tenant_id`, `customer_id`, `plan`, `environment`, `template_id`
+- `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`
 - `error` on failure events
 
 ## Build & Test
