@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-03-04
+
+### Added
+- Trace Context v1 tag support in SDK options and emitted events.
+- New optional tags: `trace_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
+
+### Changed
+- Auto-generates `trace_id` and `span_id` per tracked call when not provided.
+
 ## [0.2.0] - 2026-03-02
 
 ### Added
