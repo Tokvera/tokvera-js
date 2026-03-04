@@ -2,6 +2,12 @@
 
 Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency and token usage telemetry.
 
+## What's New in v0.2.1
+
+- Added Trace Context v1 tags.
+- New optional tags: `trace_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
+- Auto-generates `trace_id` and `span_id` when you do not provide them.
+
 ## Install
 
 ```bash
@@ -94,6 +100,32 @@ export TOKVERA_API_KEY="tokvera_project_key"
 Per-client config in `trackOpenAI(...)`, `trackAnthropic(...)`, or `trackGemini(...)` overrides env vars.
 
 If ingestion fails, the SDK will not throw and will not block OpenAI responses.
+
+## Trace Context v1
+
+Use trace tags to reconstruct request chains without sending prompt payloads.
+
+Recommended semantics:
+- `trace_id`: one end-to-end workflow/request.
+- `conversation_id`: one user conversation/session.
+- `span_id`: one model call.
+- `parent_span_id`: parent model call when nested.
+- `step_name`: readable stage label (`retrieve_context`, `draft_reply`, `quality_retry`).
+
+Example:
+
+```ts
+const tracked = trackOpenAI(openai, {
+  api_key: process.env.TOKVERA_API_KEY!,
+  feature: "support_bot",
+  tenant_id: "acme",
+  trace_id: "trace_req_20260304_001",
+  conversation_id: "conv_9832",
+  span_id: "span_root_1",
+  parent_span_id: null,
+  step_name: "draft_reply",
+});
+```
 
 ## Event Schema
 
