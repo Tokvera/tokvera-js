@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import {
   type AnthropicTrackEvent,
   type GeminiTrackEvent,
@@ -54,6 +55,15 @@ const toNonNegativeInt = (value: unknown): number => {
   return Math.trunc(parsed);
 };
 
+const toTagValue = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const generateTraceId = () => `trc_${crypto.randomUUID().replace(/-/g, "")}`;
+const generateSpanId = () => `spn_${crypto.randomUUID().replace(/-/g, "")}`;
+
 const getOpenAIUsage = (response: any): Usage => {
   const usage = response?.usage;
   return {
@@ -92,13 +102,18 @@ const getGeminiUsage = (response: any): Usage => {
 };
 
 const getTags = (options: TrackOptions): TrackTags => ({
-  feature: options.feature,
-  tenant_id: options.tenant_id,
-  customer_id: options.customer_id,
-  attempt_type: options.attempt_type,
-  plan: options.plan,
-  environment: options.environment,
-  template_id: options.template_id,
+  feature: toTagValue(options.feature),
+  tenant_id: toTagValue(options.tenant_id),
+  customer_id: toTagValue(options.customer_id),
+  attempt_type: toTagValue(options.attempt_type),
+  plan: toTagValue(options.plan),
+  environment: toTagValue(options.environment),
+  template_id: toTagValue(options.template_id),
+  trace_id: toTagValue(options.trace_id) ?? generateTraceId(),
+  conversation_id: toTagValue(options.conversation_id),
+  span_id: toTagValue(options.span_id) ?? generateSpanId(),
+  parent_span_id: toTagValue(options.parent_span_id),
+  step_name: toTagValue(options.step_name),
 });
 
 const extractModelFromArgs = (args: any[]): string | undefined => {

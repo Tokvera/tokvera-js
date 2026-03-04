@@ -6,6 +6,11 @@ export type TrackTags = {
   plan?: string;
   environment?: string;
   template_id?: string;
+  trace_id?: string;
+  conversation_id?: string;
+  span_id?: string;
+  parent_span_id?: string;
+  step_name?: string;
 };
 
 export type TrackOptions = TrackTags & {

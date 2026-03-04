@@ -22,6 +22,9 @@ const tracked = trackOpenAI(openai, {
   feature: "onboarding",
   tenant_id: "tenant_123",
   customer_id: "cust_456",
+  trace_id: "trace_checkout_784",
+  conversation_id: "conv_101",
+  step_name: "draft_reply",
   plan: "pro",
   environment: "production",
   template_id: "tmpl_789",
@@ -105,8 +108,10 @@ Events include:
 - `latency_ms`
 - `model`
 - `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`
+- `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
 - `error` on failure events
+
+`trace_id` and `span_id` are auto-generated per request if not provided.
 
 ## Build & Test
 

@@ -40,6 +40,10 @@ describe("trackOpenAI", () => {
       feature: "checkout",
       tenant_id: "tenant_1",
       attempt_type: "regenerate",
+      trace_id: "trace_checkout_42",
+      conversation_id: "conv_123",
+      parent_span_id: "spn_parent_1",
+      step_name: "draft_reply",
       api_key: "project_key_123",
     });
     const result = await tracked.chat.completions.create({ messages: [] });
@@ -63,6 +67,12 @@ describe("trackOpenAI", () => {
     expect(event.tags.feature).toBe("checkout");
     expect(event.tags.tenant_id).toBe("tenant_1");
     expect(event.tags.attempt_type).toBe("regenerate");
+    expect(event.tags.trace_id).toBe("trace_checkout_42");
+    expect(event.tags.conversation_id).toBe("conv_123");
+    expect(event.tags.parent_span_id).toBe("spn_parent_1");
+    expect(event.tags.step_name).toBe("draft_reply");
+    expect(typeof event.tags.span_id).toBe("string");
+    expect(event.tags.span_id.length).toBeGreaterThan(0);
   });
 
   it("proxies responses.create and emits a unified success event", async () => {
@@ -99,6 +109,8 @@ describe("trackOpenAI", () => {
     expect(event.status).toBe("success");
     expect(event.usage.completion_tokens).toBe(4);
     expect(event.tags.environment).toBe("test");
+    expect(typeof event.tags.trace_id).toBe("string");
+    expect(typeof event.tags.span_id).toBe("string");
   });
 
   it("emits failure event and rethrows when OpenAI call fails", async () => {
