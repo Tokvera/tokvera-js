@@ -203,6 +203,27 @@ const model = new ChatOpenAI({
 await model.invoke("Hello");
 ```
 
+## Vercel AI SDK Helper
+
+Wrap `generateText` to emit Tokvera telemetry with trace/evaluation tags.
+
+```ts
+import { generateText } from "ai";
+import { wrapVercelAIGenerateText } from "@tokvera/sdk";
+
+const trackedGenerateText = wrapVercelAIGenerateText(generateText, {
+  api_key: process.env.TOKVERA_API_KEY,
+  feature: "assistant_reply",
+  tenant_id: "acme",
+  environment: "production",
+});
+
+const result = await trackedGenerateText({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Hello" }],
+});
+```
+
 ## Event Schema
 
 Canonical specification: [`tokvera-api/docs/EVENT_SCHEMA.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/EVENT_SCHEMA.md)

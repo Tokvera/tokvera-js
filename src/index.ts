@@ -16,6 +16,10 @@ import {
   type TrackOptions,
   type TrackTags,
   type Usage,
+  type VercelAICallParams,
+  type VercelAIResult,
+  type VercelAITrackOptions,
+  type VercelAIUsage,
 } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 2000;
@@ -218,8 +222,8 @@ const deriveRequestStepName = (request: ExpressLikeRequest): string | undefined 
   return method ? `${method} ${path}` : path;
 };
 
-const withDefinedTrackOptions = (options: TrackOptions): TrackOptions => {
-  const normalized: TrackOptions = {};
+const withDefinedTrackOptions = <T extends Record<string, unknown>>(options: T): T => {
+  const normalized = {} as T;
   for (const [key, value] of Object.entries(options)) {
     if (value === undefined || value === null) continue;
     (normalized as Record<string, unknown>)[key] = value;
@@ -677,6 +681,196 @@ export const createTokveraLangChainCallback = (
   options: LangChainCallbackOptions = {}
 ) => new TokveraLangChainCallbackHandler(options);
 
+const toRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  return value as Record<string, unknown>;
+};
+
+const readNumberField = (source: unknown, keys: string[]): number | undefined => {
+  const record = toRecord(source);
+  if (!record) return undefined;
+  for (const key of keys) {
+    const parsed = toOptionalFiniteNumber(record[key]);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+};
+
+const inferModelFromVercelParams = (params: VercelAICallParams | undefined): string | undefined => {
+  if (!params) return undefined;
+  const modelValue = params.model;
+  if (typeof modelValue === "string") return toTagValue(modelValue);
+  const modelObject = toRecord(modelValue);
+  if (!modelObject) return undefined;
+  return (
+    toTagValue(modelObject.modelId) ??
+    toTagValue(modelObject.model_id) ??
+    toTagValue(modelObject.id)
+  );
+};
+
+const inferModelFromVercelResult = (result: VercelAIResult | undefined): string | undefined => {
+  if (!result) return undefined;
+  return (
+    toTagValue(result.model) ??
+    toTagValue(result.modelId) ??
+    toTagValue(result.model_id)
+  );
+};
+
+const extractUsageFromVercelResult = (result: VercelAIResult | undefined): Usage => {
+  const usage = result?.usage as VercelAIUsage | undefined;
+  const providerMetadata =
+    toRecord(result?.providerMetadata) ??
+    toRecord(result?.provider_metadata);
+  const providerUsageCandidates = providerMetadata
+    ? Object.values(providerMetadata)
+        .map((item) => toRecord(item)?.usage ?? toRecord(item)?.tokenUsage ?? toRecord(item)?.token_usage)
+        .filter(Boolean)
+    : [];
+
+  const usageSources: unknown[] = [
+    usage,
+    ...providerUsageCandidates,
+  ];
+
+  let promptTokens: number | undefined;
+  let completionTokens: number | undefined;
+  let totalTokens: number | undefined;
+
+  for (const source of usageSources) {
+    promptTokens =
+      promptTokens ??
+      readNumberField(source, ["promptTokens", "prompt_tokens", "inputTokens", "input_tokens", "input_tokens"]);
+    completionTokens =
+      completionTokens ??
+      readNumberField(source, [
+        "completionTokens",
+        "completion_tokens",
+        "outputTokens",
+        "output_tokens",
+        "candidatesTokenCount",
+        "candidates_token_count",
+      ]);
+    totalTokens =
+      totalTokens ??
+      readNumberField(source, ["totalTokens", "total_tokens", "totalTokenCount", "total_token_count"]);
+  }
+
+  const safePrompt = toNonNegativeInt(promptTokens ?? 0);
+  const safeCompletion = toNonNegativeInt(completionTokens ?? 0);
+  const safeTotal = toNonNegativeInt(totalTokens ?? safePrompt + safeCompletion);
+
+  return {
+    prompt_tokens: safePrompt,
+    completion_tokens: safeCompletion,
+    total_tokens: safeTotal,
+  };
+};
+
+const buildVercelEventContract = (
+  options: VercelAITrackOptions,
+  model: string | undefined
+): ProviderContract => {
+  const provider =
+    (toTagValue(options.provider) as TrackEvent["provider"] | undefined) ??
+    inferProviderFromModel(model);
+  const endpointOverride = toTagValue(options.endpoint) as TrackEvent["endpoint"] | undefined;
+
+  if (provider === "anthropic") {
+    return {
+      provider: "anthropic",
+      event_type: "anthropic.request",
+      endpoint: endpointOverride ?? "messages.create",
+    };
+  }
+
+  if (provider === "gemini") {
+    return {
+      provider: "gemini",
+      event_type: "gemini.request",
+      endpoint: endpointOverride ?? "models.generate_content",
+    };
+  }
+
+  return {
+    provider: "openai",
+    event_type: "openai.request",
+    endpoint: endpointOverride ?? "responses.create",
+  };
+};
+
+export const wrapVercelAIGenerateText = <
+  TFn extends (params: VercelAICallParams) => Promise<VercelAIResult>
+>(
+  generateText: TFn,
+  baseOptions: VercelAITrackOptions = {}
+) => {
+  return async (
+    params: Parameters<TFn>[0],
+    overrideOptions: Partial<VercelAITrackOptions> = {}
+  ): Promise<Awaited<ReturnType<TFn>>> => {
+    const start = Date.now();
+    const mergedOptions = withDefinedTrackOptions({
+      ...baseOptions,
+      ...overrideOptions,
+    });
+    const tags = getTags(mergedOptions);
+    const evaluation = getEvaluation(mergedOptions);
+
+    const modelHint =
+      toTagValue(mergedOptions.model) ??
+      inferModelFromVercelParams(params);
+    const contract = buildVercelEventContract(mergedOptions, modelHint);
+
+    try {
+      const result = await generateText(params);
+      const latencyMs = Date.now() - start;
+      const model = modelHint ?? inferModelFromVercelResult(result);
+      const event = {
+        schema_version: "2026-02-16",
+        event_type: contract.event_type,
+        provider: contract.provider,
+        endpoint: contract.endpoint,
+        status: "success",
+        timestamp: new Date().toISOString(),
+        latency_ms: latencyMs,
+        model,
+        usage: extractUsageFromVercelResult(result),
+        tags,
+        evaluation,
+      } as TrackEvent;
+      await sendWithRetry(event, mergedOptions);
+      return result as Awaited<ReturnType<TFn>>;
+    } catch (error) {
+      const latencyMs = Date.now() - start;
+      const event = {
+        schema_version: "2026-02-16",
+        event_type: contract.event_type,
+        provider: contract.provider,
+        endpoint: contract.endpoint,
+        status: "failure",
+        timestamp: new Date().toISOString(),
+        latency_ms: latencyMs,
+        model: modelHint,
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
+        tags,
+        evaluation,
+        error: {
+          type: (error as Error)?.name,
+          message: (error as Error)?.message,
+        },
+      } as TrackEvent;
+      await sendWithRetry(event, mergedOptions);
+      throw error;
+    }
+  };
+};
+
 const extractModelFromArgs = (args: any[]): string | undefined => {
   const first = args[0];
   if (first && typeof first === "object" && typeof first.model === "string" && first.model.length > 0) {
@@ -908,4 +1102,8 @@ export type {
   TrackOptions,
   TrackTags,
   Usage,
+  VercelAICallParams,
+  VercelAIResult,
+  VercelAITrackOptions,
+  VercelAIUsage,
 } from "./types.js";

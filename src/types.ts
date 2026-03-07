@@ -94,6 +94,41 @@ export type LangChainCallbackOptions = TrackOptions & {
   runIdAsTraceId?: boolean;
 };
 
+export type VercelAIUsage = {
+  promptTokens?: number;
+  prompt_tokens?: number;
+  completionTokens?: number;
+  completion_tokens?: number;
+  totalTokens?: number;
+  total_tokens?: number;
+  inputTokens?: number;
+  input_tokens?: number;
+  outputTokens?: number;
+  output_tokens?: number;
+  [key: string]: unknown;
+};
+
+export type VercelAIResult = {
+  usage?: VercelAIUsage;
+  model?: string;
+  modelId?: string;
+  model_id?: string;
+  providerMetadata?: Record<string, unknown>;
+  provider_metadata?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type VercelAICallParams = {
+  model?: string | { modelId?: string; model_id?: string; id?: string };
+  [key: string]: unknown;
+};
+
+export type VercelAITrackOptions = TrackOptions & {
+  provider?: TrackEvent["provider"];
+  endpoint?: TrackEvent["endpoint"];
+  model?: string;
+};
+
 export type TrackOptions = TrackTags &
   TrackEvaluation & {
   api_key?: string;
