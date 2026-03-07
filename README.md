@@ -2,11 +2,14 @@
 
 Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency and token usage telemetry.
 
-## What's New in v0.2.1
+## What's New in v0.2.2
 
 - Added Trace Context v1 tags.
 - New optional tags: `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
 - Added Evaluation Signals v1 fields: `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score`.
+- Added Express middleware helpers for request-level trace context propagation.
+- Added LangChain callback integration helper.
+- Added Vercel AI SDK `generateText` wrapper helper.
 - Auto-generates `trace_id` and `span_id` when you do not provide them.
 
 ## Install
