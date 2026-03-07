@@ -6,6 +6,7 @@ Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency
 
 - Added Trace Context v1 tags.
 - New optional tags: `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
+- Added Evaluation Signals v1 fields: `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score`.
 - Auto-generates `trace_id` and `span_id` when you do not provide them.
 
 ## Install
@@ -32,6 +33,9 @@ const tracked = trackOpenAI(openai, {
   run_id: "run_checkout_784",
   conversation_id: "conv_101",
   step_name: "draft_reply",
+  outcome: "success",
+  quality_label: "good",
+  feedback_score: 5,
   plan: "pro",
   environment: "production",
   template_id: "tmpl_789",
@@ -144,6 +148,7 @@ Events include:
 - `model`
 - `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens`
 - `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
+- Evaluation signals (optional): `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score` (emitted in `tags` and top-level `evaluation`)
 - `error` on failure events
 
 `trace_id` and `span_id` are auto-generated per request if not provided.

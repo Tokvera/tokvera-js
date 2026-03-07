@@ -68,6 +68,11 @@ describe("event envelope v1 compatibility", () => {
       parent_span_id: "spn_parent_contract_1",
       conversation_id: "conv_contract_1",
       step_name: "draft_reply",
+      outcome: "failure",
+      retry_reason: "timeout",
+      fallback_reason: "model_downgrade",
+      quality_label: "poor",
+      feedback_score: 2,
     });
 
     await tracked.chat.completions.create({ model: "gpt-4o-mini", messages: [] });
@@ -87,6 +92,16 @@ describe("event envelope v1 compatibility", () => {
     expect(event.tags.parent_span_id).toBe("spn_parent_contract_1");
     expect(event.tags.conversation_id).toBe("conv_contract_1");
     expect(event.tags.step_name).toBe("draft_reply");
+    expect(event.tags.outcome).toBe("failure");
+    expect(event.tags.retry_reason).toBe("timeout");
+    expect(event.tags.fallback_reason).toBe("model_downgrade");
+    expect(event.tags.quality_label).toBe("poor");
+    expect(event.tags.feedback_score).toBe("2");
+    expect(event.evaluation.outcome).toBe("failure");
+    expect(event.evaluation.retry_reason).toBe("timeout");
+    expect(event.evaluation.fallback_reason).toBe("model_downgrade");
+    expect(event.evaluation.quality_label).toBe("poor");
+    expect(event.evaluation.feedback_score).toBe(2);
   });
 
   it("matches canonical envelope and usage normalization for Anthropic", async () => {

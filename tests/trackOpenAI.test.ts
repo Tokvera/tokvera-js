@@ -45,6 +45,11 @@ describe("trackOpenAI", () => {
       conversation_id: "conv_123",
       parent_span_id: "spn_parent_1",
       step_name: "draft_reply",
+      outcome: "success",
+      retry_reason: "none",
+      fallback_reason: "none",
+      quality_label: "good",
+      feedback_score: 5,
       api_key: "project_key_123",
     });
     const result = await tracked.chat.completions.create({ messages: [] });
@@ -73,6 +78,13 @@ describe("trackOpenAI", () => {
     expect(event.tags.conversation_id).toBe("conv_123");
     expect(event.tags.parent_span_id).toBe("spn_parent_1");
     expect(event.tags.step_name).toBe("draft_reply");
+    expect(event.tags.outcome).toBe("success");
+    expect(event.tags.retry_reason).toBe("none");
+    expect(event.tags.fallback_reason).toBe("none");
+    expect(event.tags.quality_label).toBe("good");
+    expect(event.tags.feedback_score).toBe("5");
+    expect(event.evaluation.outcome).toBe("success");
+    expect(event.evaluation.feedback_score).toBe(5);
     expect(typeof event.tags.span_id).toBe("string");
     expect(event.tags.span_id.length).toBeGreaterThan(0);
   });

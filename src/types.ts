@@ -12,9 +12,23 @@ export type TrackTags = {
   span_id?: string;
   parent_span_id?: string;
   step_name?: string;
+  outcome?: string;
+  retry_reason?: string;
+  fallback_reason?: string;
+  quality_label?: string;
+  feedback_score?: string | number;
 };
 
-export type TrackOptions = TrackTags & {
+export type TrackEvaluation = {
+  outcome?: string;
+  retry_reason?: string;
+  fallback_reason?: string;
+  quality_label?: string;
+  feedback_score?: number | string;
+};
+
+export type TrackOptions = TrackTags &
+  TrackEvaluation & {
   api_key?: string;
   apiKey?: string;
   ingest_url?: string;
@@ -40,6 +54,7 @@ type BaseTrackEvent = {
   model?: string;
   usage: Usage;
   tags: TrackTags;
+  evaluation?: TrackEvaluation;
   prompt_hash?: string;
   response_hash?: string;
   error?: TrackError;

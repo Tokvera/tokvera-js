@@ -3,6 +3,7 @@ import {
   type AnthropicTrackEvent,
   type GeminiTrackEvent,
   type OpenAITrackEvent,
+  type TrackEvaluation,
   type TrackEvent,
   type TrackOptions,
   type TrackTags,
@@ -61,6 +62,15 @@ const toTagValue = (value: unknown): string | undefined => {
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+const toOptionalFiniteNumber = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
 const generateTraceId = () => `trc_${crypto.randomUUID().replace(/-/g, "")}`;
 const generateSpanId = () => `spn_${crypto.randomUUID().replace(/-/g, "")}`;
 
@@ -101,21 +111,51 @@ const getGeminiUsage = (response: any): Usage => {
   };
 };
 
-const getTags = (options: TrackOptions): TrackTags => ({
-  feature: toTagValue(options.feature),
-  tenant_id: toTagValue(options.tenant_id),
-  customer_id: toTagValue(options.customer_id),
-  attempt_type: toTagValue(options.attempt_type),
-  plan: toTagValue(options.plan),
-  environment: toTagValue(options.environment),
-  template_id: toTagValue(options.template_id),
-  trace_id: toTagValue(options.trace_id) ?? generateTraceId(),
-  run_id: toTagValue(options.run_id),
-  conversation_id: toTagValue(options.conversation_id),
-  span_id: toTagValue(options.span_id) ?? generateSpanId(),
-  parent_span_id: toTagValue(options.parent_span_id),
-  step_name: toTagValue(options.step_name),
-});
+const getTags = (options: TrackOptions): TrackTags => {
+  const feedbackScore = toOptionalFiniteNumber(options.feedback_score);
+  return {
+    feature: toTagValue(options.feature),
+    tenant_id: toTagValue(options.tenant_id),
+    customer_id: toTagValue(options.customer_id),
+    attempt_type: toTagValue(options.attempt_type),
+    plan: toTagValue(options.plan),
+    environment: toTagValue(options.environment),
+    template_id: toTagValue(options.template_id),
+    trace_id: toTagValue(options.trace_id) ?? generateTraceId(),
+    run_id: toTagValue(options.run_id),
+    conversation_id: toTagValue(options.conversation_id),
+    span_id: toTagValue(options.span_id) ?? generateSpanId(),
+    parent_span_id: toTagValue(options.parent_span_id),
+    step_name: toTagValue(options.step_name),
+    outcome: toTagValue(options.outcome),
+    retry_reason: toTagValue(options.retry_reason),
+    fallback_reason: toTagValue(options.fallback_reason),
+    quality_label: toTagValue(options.quality_label),
+    feedback_score: feedbackScore !== undefined ? String(feedbackScore) : undefined,
+  };
+};
+
+const getEvaluation = (options: TrackOptions): TrackEvaluation | undefined => {
+  const evaluation: TrackEvaluation = {
+    outcome: toTagValue(options.outcome),
+    retry_reason: toTagValue(options.retry_reason),
+    fallback_reason: toTagValue(options.fallback_reason),
+    quality_label: toTagValue(options.quality_label),
+    feedback_score: toOptionalFiniteNumber(options.feedback_score),
+  };
+
+  if (
+    evaluation.outcome === undefined &&
+    evaluation.retry_reason === undefined &&
+    evaluation.fallback_reason === undefined &&
+    evaluation.quality_label === undefined &&
+    evaluation.feedback_score === undefined
+  ) {
+    return undefined;
+  }
+
+  return evaluation;
+};
 
 const extractModelFromArgs = (args: any[]): string | undefined => {
   const first = args[0];
@@ -131,6 +171,7 @@ const buildEvent = (
   response: any,
   modelHint: string | undefined,
   tags: TrackTags,
+  evaluation: TrackEvaluation | undefined,
   status: TrackEvent["status"],
   error?: Error
 ): TrackEvent => ({
@@ -144,6 +185,7 @@ const buildEvent = (
   model: contract.modelFromResponse?.(response) ?? modelHint,
   usage: contract.usageFromResponse(response),
   tags,
+  evaluation,
   error:
     status === "failure"
       ? {
@@ -197,10 +239,12 @@ const wrapCreate = (
   return async (...args: any[]) => {
     const start = Date.now();
     const modelHint = extractModelFromArgs(args);
+    const tags = getTags(options);
+    const evaluation = getEvaluation(options);
     try {
       const response = await originalCreate(...args);
       const latencyMs = Date.now() - start;
-      const event = buildEvent(contract, latencyMs, response, modelHint, getTags(options), "success");
+      const event = buildEvent(contract, latencyMs, response, modelHint, tags, evaluation, "success");
       void sendWithRetry(event, options);
       return response;
     } catch (error) {
@@ -210,7 +254,8 @@ const wrapCreate = (
         latencyMs,
         undefined,
         modelHint,
-        getTags(options),
+        tags,
+        evaluation,
         "failure",
         error as Error
       );
@@ -330,6 +375,7 @@ export type {
   AnthropicTrackEvent,
   GeminiTrackEvent,
   OpenAITrackEvent,
+  TrackEvaluation,
   TrackEvent,
   TrackOptions,
   TrackTags,
