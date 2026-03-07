@@ -35,3 +35,7 @@ jobs:
 
       - name: Event envelope v1 compatibility
         run: npm run test:schema-compat
+
+      - name: Canonical schema contract drift check
+        if: matrix.node-version == 20
+        run: npm run test:canonical-contract

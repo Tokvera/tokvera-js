@@ -21,6 +21,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "vitest run",
     "test:schema-compat": "vitest run tests/eventEnvelopeV1.contract.test.ts",
+    "test:canonical-contract": "node scripts/check-canonical-contract.mjs",
     "test:watch": "vitest"
   },
   "devDependencies": {
