@@ -180,6 +180,29 @@ app.post("/reply", async (req, res, next) => {
 });
 ```
 
+## LangChain Callback Integration
+
+Use a callback handler to emit Tokvera events for LangChain LLM runs.
+
+```ts
+import { createTokveraLangChainCallback } from "@tokvera/sdk";
+import { ChatOpenAI } from "@langchain/openai";
+
+const callback = createTokveraLangChainCallback({
+  api_key: process.env.TOKVERA_API_KEY,
+  feature: "agent_support",
+  tenant_id: "acme",
+  environment: "production",
+});
+
+const model = new ChatOpenAI({
+  model: "gpt-4o-mini",
+  callbacks: [callback],
+});
+
+await model.invoke("Hello");
+```
+
 ## Event Schema
 
 Canonical specification: [`tokvera-api/docs/EVENT_SCHEMA.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/EVENT_SCHEMA.md)

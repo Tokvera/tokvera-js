@@ -6,6 +6,9 @@ import {
   type ExpressLikeResponse,
   type ExpressMiddlewareOptions,
   type ExpressValueResolver,
+  type LangChainCallbackOptions,
+  type LangChainLLMResult,
+  type LangChainSerialized,
   type GeminiTrackEvent,
   type OpenAITrackEvent,
   type TrackEvaluation,
@@ -310,6 +313,370 @@ export const getTrackOptionsFromExpressRequest = (
   return merged;
 };
 
+type ProviderContract = {
+  provider: TrackEvent["provider"];
+  event_type: TrackEvent["event_type"];
+  endpoint: TrackEvent["endpoint"];
+};
+
+type LangChainRunSnapshot = {
+  startedAt: number;
+  contract: ProviderContract;
+  model?: string;
+  tags: TrackTags;
+  evaluation?: TrackEvaluation;
+};
+
+const sanitizeIdComponent = (value: unknown): string => {
+  const normalized = String(value ?? "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 48);
+  return normalized;
+};
+
+const createDerivedId = (prefix: "trc" | "spn", source?: unknown): string => {
+  const sanitized = sanitizeIdComponent(source);
+  if (!sanitized) {
+    return prefix === "trc" ? generateTraceId() : generateSpanId();
+  }
+  return `${prefix}_${sanitized.toLowerCase()}`;
+};
+
+const readObjectValue = (source: unknown, key: string): unknown => {
+  if (!source || typeof source !== "object") return undefined;
+  return (source as Record<string, unknown>)[key];
+};
+
+const readTagFromObject = (source: unknown, key: string): string | undefined =>
+  toTagValue(readObjectValue(source, key));
+
+const readNumberFromObject = (source: unknown, key: string): number | undefined =>
+  toOptionalFiniteNumber(readObjectValue(source, key));
+
+const inferProviderFromModel = (model: string | undefined): TrackEvent["provider"] => {
+  const normalized = (model ?? "").toLowerCase();
+  if (normalized.includes("claude")) return "anthropic";
+  if (normalized.includes("gemini")) return "gemini";
+  return "openai";
+};
+
+const contractFromProvider = (
+  provider: TrackEvent["provider"],
+  endpointOverride?: TrackEvent["endpoint"]
+): ProviderContract => {
+  if (provider === "anthropic") {
+    return {
+      provider: "anthropic",
+      event_type: "anthropic.request",
+      endpoint: endpointOverride ?? "messages.create",
+    };
+  }
+
+  if (provider === "gemini") {
+    return {
+      provider: "gemini",
+      event_type: "gemini.request",
+      endpoint: endpointOverride ?? "models.generate_content",
+    };
+  }
+
+  return {
+    provider: "openai",
+    event_type: "openai.request",
+    endpoint: endpointOverride ?? "chat.completions.create",
+  };
+};
+
+const inferModelFromLangChainStart = (
+  serialized: LangChainSerialized | undefined,
+  extraParams: Record<string, unknown> | undefined
+): string | undefined => {
+  const serializedModel =
+    readTagFromObject(serialized?.kwargs, "model") ??
+    readTagFromObject(serialized?.kwargs, "modelName") ??
+    readTagFromObject(serialized?.kwargs, "model_name");
+  if (serializedModel) return serializedModel;
+
+  const invocationParams =
+    (readObjectValue(extraParams, "invocation_params") as Record<string, unknown> | undefined) ??
+    (readObjectValue(extraParams, "invocationParams") as Record<string, unknown> | undefined);
+  const invocationModel =
+    readTagFromObject(invocationParams, "model") ??
+    readTagFromObject(invocationParams, "modelName") ??
+    readTagFromObject(invocationParams, "model_name");
+  if (invocationModel) return invocationModel;
+
+  return undefined;
+};
+
+const extractLangChainUsage = (result: LangChainLLMResult | undefined): Usage => {
+  const llmOutput =
+    (result?.llmOutput as Record<string, unknown> | undefined) ??
+    (result?.llm_output as Record<string, unknown> | undefined) ??
+    {};
+  const tokenUsage =
+    (readObjectValue(llmOutput, "tokenUsage") as Record<string, unknown> | undefined) ??
+    (readObjectValue(llmOutput, "token_usage") as Record<string, unknown> | undefined) ??
+    {};
+  const usageObject =
+    (readObjectValue(llmOutput, "usage") as Record<string, unknown> | undefined) ??
+    {};
+  const usageMetadata =
+    (readObjectValue(llmOutput, "usageMetadata") as Record<string, unknown> | undefined) ??
+    (readObjectValue(llmOutput, "usage_metadata") as Record<string, unknown> | undefined) ??
+    {};
+
+  const promptTokens =
+    readNumberFromObject(tokenUsage, "promptTokens") ??
+    readNumberFromObject(tokenUsage, "prompt_tokens") ??
+    readNumberFromObject(tokenUsage, "input_tokens") ??
+    readNumberFromObject(usageObject, "prompt_tokens") ??
+    readNumberFromObject(usageObject, "input_tokens") ??
+    readNumberFromObject(usageMetadata, "promptTokenCount") ??
+    readNumberFromObject(usageMetadata, "prompt_token_count") ??
+    readNumberFromObject(llmOutput, "promptTokens") ??
+    readNumberFromObject(llmOutput, "prompt_tokens") ??
+    0;
+
+  const completionTokens =
+    readNumberFromObject(tokenUsage, "completionTokens") ??
+    readNumberFromObject(tokenUsage, "completion_tokens") ??
+    readNumberFromObject(tokenUsage, "output_tokens") ??
+    readNumberFromObject(usageObject, "completion_tokens") ??
+    readNumberFromObject(usageObject, "output_tokens") ??
+    readNumberFromObject(usageMetadata, "candidatesTokenCount") ??
+    readNumberFromObject(usageMetadata, "candidates_token_count") ??
+    readNumberFromObject(llmOutput, "completionTokens") ??
+    readNumberFromObject(llmOutput, "completion_tokens") ??
+    0;
+
+  const totalTokens =
+    readNumberFromObject(tokenUsage, "totalTokens") ??
+    readNumberFromObject(tokenUsage, "total_tokens") ??
+    readNumberFromObject(usageObject, "total_tokens") ??
+    readNumberFromObject(usageMetadata, "totalTokenCount") ??
+    readNumberFromObject(usageMetadata, "total_token_count") ??
+    readNumberFromObject(llmOutput, "totalTokens") ??
+    readNumberFromObject(llmOutput, "total_tokens") ??
+    promptTokens + completionTokens;
+
+  return {
+    prompt_tokens: toNonNegativeInt(promptTokens),
+    completion_tokens: toNonNegativeInt(completionTokens),
+    total_tokens: toNonNegativeInt(totalTokens),
+  };
+};
+
+const deriveLangChainSnapshot = (
+  options: LangChainCallbackOptions,
+  serialized: LangChainSerialized | undefined,
+  runId: string,
+  parentRunId: string | undefined,
+  extraParams: Record<string, unknown> | undefined,
+  metadata: Record<string, unknown> | undefined,
+  runName: string | undefined,
+  parentSnapshot: LangChainRunSnapshot | undefined
+): LangChainRunSnapshot => {
+  const model =
+    toTagValue(options.model) ??
+    readTagFromObject(metadata, "model") ??
+    inferModelFromLangChainStart(serialized, extraParams);
+  const provider =
+    toTagValue(options.provider) as TrackEvent["provider"] | undefined ??
+    (readTagFromObject(metadata, "provider") as TrackEvent["provider"] | undefined) ??
+    inferProviderFromModel(model);
+  const contract = contractFromProvider(
+    provider,
+    toTagValue(options.endpoint) as TrackEvent["endpoint"] | undefined
+  );
+
+  const feedbackScore =
+    toOptionalFiniteNumber(options.feedback_score) ??
+    readNumberFromObject(metadata, "feedback_score");
+  const runScopedTraceId =
+    options.runIdAsTraceId === true
+      ? createDerivedId("trc", parentRunId ?? runId)
+      : undefined;
+
+  const mergedOptions = withDefinedTrackOptions({
+    ...options,
+    feature: toTagValue(options.feature) ?? readTagFromObject(metadata, "feature"),
+    tenant_id: toTagValue(options.tenant_id) ?? readTagFromObject(metadata, "tenant_id"),
+    customer_id: toTagValue(options.customer_id) ?? readTagFromObject(metadata, "customer_id"),
+    attempt_type: toTagValue(options.attempt_type) ?? readTagFromObject(metadata, "attempt_type"),
+    plan: toTagValue(options.plan) ?? readTagFromObject(metadata, "plan"),
+    environment: toTagValue(options.environment) ?? readTagFromObject(metadata, "environment"),
+    template_id: toTagValue(options.template_id) ?? readTagFromObject(metadata, "template_id"),
+    trace_id:
+      toTagValue(options.trace_id) ??
+      readTagFromObject(metadata, "trace_id") ??
+      parentSnapshot?.tags.trace_id ??
+      runScopedTraceId ??
+      createDerivedId("trc", parentRunId ?? runId),
+    run_id:
+      toTagValue(options.run_id) ??
+      readTagFromObject(metadata, "run_id") ??
+      parentSnapshot?.tags.run_id ??
+      toTagValue(runId),
+    conversation_id:
+      toTagValue(options.conversation_id) ??
+      readTagFromObject(metadata, "conversation_id") ??
+      parentSnapshot?.tags.conversation_id,
+    span_id:
+      toTagValue(options.span_id) ??
+      readTagFromObject(metadata, "span_id") ??
+      createDerivedId("spn", runId),
+    parent_span_id:
+      toTagValue(options.parent_span_id) ??
+      readTagFromObject(metadata, "parent_span_id") ??
+      parentSnapshot?.tags.span_id ??
+      (parentRunId ? createDerivedId("spn", parentRunId) : undefined),
+    step_name:
+      toTagValue(options.step_name) ??
+      readTagFromObject(metadata, "step_name") ??
+      toTagValue(runName) ??
+      readTagFromObject(serialized?.kwargs, "name"),
+    outcome: toTagValue(options.outcome) ?? readTagFromObject(metadata, "outcome"),
+    retry_reason: toTagValue(options.retry_reason) ?? readTagFromObject(metadata, "retry_reason"),
+    fallback_reason:
+      toTagValue(options.fallback_reason) ?? readTagFromObject(metadata, "fallback_reason"),
+    quality_label: toTagValue(options.quality_label) ?? readTagFromObject(metadata, "quality_label"),
+    feedback_score: feedbackScore,
+  });
+
+  return {
+    startedAt: Date.now(),
+    contract,
+    model,
+    tags: getTags(mergedOptions),
+    evaluation: getEvaluation(mergedOptions),
+  };
+};
+
+export class TokveraLangChainCallbackHandler {
+  name = "tokvera_langchain_callback";
+
+  private readonly options: LangChainCallbackOptions;
+  private readonly runs = new Map<string, LangChainRunSnapshot>();
+
+  constructor(options: LangChainCallbackOptions = {}) {
+    this.options = options;
+  }
+
+  async handleLLMStart(
+    serialized: LangChainSerialized,
+    _prompts: string[],
+    runId: string,
+    parentRunId?: string,
+    extraParams?: Record<string, unknown>,
+    _tags?: string[],
+    metadata?: Record<string, unknown>,
+    runName?: string
+  ): Promise<void> {
+    const runKey = String(runId);
+    const parentKey = parentRunId ? String(parentRunId) : undefined;
+    const parentSnapshot = parentKey ? this.runs.get(parentKey) : undefined;
+    const snapshot = deriveLangChainSnapshot(
+      this.options,
+      serialized,
+      runKey,
+      parentKey,
+      extraParams,
+      metadata,
+      runName,
+      parentSnapshot
+    );
+    this.runs.set(runKey, snapshot);
+  }
+
+  async handleLLMEnd(
+    output: LangChainLLMResult,
+    runId: string
+  ): Promise<void> {
+    const runKey = String(runId);
+    const snapshot =
+      this.runs.get(runKey) ??
+      deriveLangChainSnapshot(this.options, undefined, runKey, undefined, undefined, undefined, undefined, undefined);
+    this.runs.delete(runKey);
+
+    const latencyMs = Math.max(0, Date.now() - snapshot.startedAt);
+    const usage = extractLangChainUsage(output);
+    const event = {
+      schema_version: "2026-02-16",
+      event_type: snapshot.contract.event_type,
+      provider: snapshot.contract.provider,
+      endpoint: snapshot.contract.endpoint,
+      status: "success",
+      timestamp: new Date().toISOString(),
+      latency_ms: latencyMs,
+      model: snapshot.model,
+      usage,
+      tags: {
+        ...snapshot.tags,
+        outcome: snapshot.tags.outcome ?? "success",
+      },
+      evaluation:
+        snapshot.evaluation || snapshot.tags.outcome || snapshot.tags.feedback_score
+          ? {
+              ...(snapshot.evaluation ?? {}),
+              outcome: snapshot.evaluation?.outcome ?? snapshot.tags.outcome ?? "success",
+            }
+          : undefined,
+    } as TrackEvent;
+
+    await sendWithRetry(event, this.options);
+  }
+
+  async handleLLMError(
+    error: Error,
+    runId: string
+  ): Promise<void> {
+    const runKey = String(runId);
+    const snapshot =
+      this.runs.get(runKey) ??
+      deriveLangChainSnapshot(this.options, undefined, runKey, undefined, undefined, undefined, undefined, undefined);
+    this.runs.delete(runKey);
+
+    const latencyMs = Math.max(0, Date.now() - snapshot.startedAt);
+    const event = {
+      schema_version: "2026-02-16",
+      event_type: snapshot.contract.event_type,
+      provider: snapshot.contract.provider,
+      endpoint: snapshot.contract.endpoint,
+      status: "failure",
+      timestamp: new Date().toISOString(),
+      latency_ms: latencyMs,
+      model: snapshot.model,
+      usage: {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+      },
+      tags: {
+        ...snapshot.tags,
+        outcome: snapshot.tags.outcome ?? "failure",
+      },
+      evaluation:
+        snapshot.evaluation || snapshot.tags.outcome || snapshot.tags.feedback_score
+          ? {
+              ...(snapshot.evaluation ?? {}),
+              outcome: snapshot.evaluation?.outcome ?? snapshot.tags.outcome ?? "failure",
+            }
+          : undefined,
+      error: {
+        type: error?.name,
+        message: error?.message,
+      },
+    } as TrackEvent;
+
+    await sendWithRetry(event, this.options);
+  }
+}
+
+export const createTokveraLangChainCallback = (
+  options: LangChainCallbackOptions = {}
+) => new TokveraLangChainCallbackHandler(options);
+
 const extractModelFromArgs = (args: any[]): string | undefined => {
   const first = args[0];
   if (first && typeof first === "object" && typeof first.model === "string" && first.model.length > 0) {
@@ -529,6 +896,9 @@ export type {
   ExpressLikeNext,
   ExpressLikeRequest,
   ExpressLikeResponse,
+  LangChainCallbackOptions,
+  LangChainLLMResult,
+  LangChainSerialized,
   ExpressMiddlewareOptions,
   ExpressValueResolver,
   GeminiTrackEvent,

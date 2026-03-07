@@ -74,6 +74,26 @@ export type ExpressMiddlewareOptions = {
   feedback_score?: ExpressValueResolver<number | string>;
 };
 
+export type LangChainSerialized = {
+  id?: string[];
+  kwargs?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type LangChainLLMResult = {
+  llmOutput?: Record<string, unknown>;
+  llm_output?: Record<string, unknown>;
+  generations?: unknown[];
+  [key: string]: unknown;
+};
+
+export type LangChainCallbackOptions = TrackOptions & {
+  provider?: TrackEvent["provider"];
+  endpoint?: TrackEvent["endpoint"];
+  model?: string;
+  runIdAsTraceId?: boolean;
+};
+
 export type TrackOptions = TrackTags &
   TrackEvaluation & {
   api_key?: string;
