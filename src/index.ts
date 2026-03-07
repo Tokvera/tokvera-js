@@ -110,6 +110,7 @@ const getTags = (options: TrackOptions): TrackTags => ({
   environment: toTagValue(options.environment),
   template_id: toTagValue(options.template_id),
   trace_id: toTagValue(options.trace_id) ?? generateTraceId(),
+  run_id: toTagValue(options.run_id),
   conversation_id: toTagValue(options.conversation_id),
   span_id: toTagValue(options.span_id) ?? generateSpanId(),
   parent_span_id: toTagValue(options.parent_span_id),

@@ -41,6 +41,7 @@ describe("trackOpenAI", () => {
       tenant_id: "tenant_1",
       attempt_type: "regenerate",
       trace_id: "trace_checkout_42",
+      run_id: "run_checkout_42",
       conversation_id: "conv_123",
       parent_span_id: "spn_parent_1",
       step_name: "draft_reply",
@@ -68,6 +69,7 @@ describe("trackOpenAI", () => {
     expect(event.tags.tenant_id).toBe("tenant_1");
     expect(event.tags.attempt_type).toBe("regenerate");
     expect(event.tags.trace_id).toBe("trace_checkout_42");
+    expect(event.tags.run_id).toBe("run_checkout_42");
     expect(event.tags.conversation_id).toBe("conv_123");
     expect(event.tags.parent_span_id).toBe("spn_parent_1");
     expect(event.tags.step_name).toBe("draft_reply");

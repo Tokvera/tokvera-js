@@ -5,7 +5,7 @@ Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency
 ## What's New in v0.2.1
 
 - Added Trace Context v1 tags.
-- New optional tags: `trace_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
+- New optional tags: `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
 - Auto-generates `trace_id` and `span_id` when you do not provide them.
 
 ## Install
@@ -29,6 +29,7 @@ const tracked = trackOpenAI(openai, {
   tenant_id: "tenant_123",
   customer_id: "cust_456",
   trace_id: "trace_checkout_784",
+  run_id: "run_checkout_784",
   conversation_id: "conv_101",
   step_name: "draft_reply",
   plan: "pro",
@@ -107,6 +108,7 @@ Use trace tags to reconstruct request chains without sending prompt payloads.
 
 Recommended semantics:
 - `trace_id`: one end-to-end workflow/request.
+- `run_id`: one execution run of an agent/workflow.
 - `conversation_id`: one user conversation/session.
 - `span_id`: one model call.
 - `parent_span_id`: parent model call when nested.
@@ -120,6 +122,7 @@ const tracked = trackOpenAI(openai, {
   feature: "support_bot",
   tenant_id: "acme",
   trace_id: "trace_req_20260304_001",
+  run_id: "run_agent_20260304_001",
   conversation_id: "conv_9832",
   span_id: "span_root_1",
   parent_span_id: null,
@@ -140,7 +143,7 @@ Events include:
 - `latency_ms`
 - `model`
 - `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
+- `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
 - `error` on failure events
 
 `trace_id` and `span_id` are auto-generated per request if not provided.
@@ -150,4 +153,5 @@ Events include:
 ```bash
 npm run build
 npm test
+npm run test:schema-compat
 ```

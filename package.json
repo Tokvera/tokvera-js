@@ -20,6 +20,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "vitest run",
+    "test:schema-compat": "vitest run tests/eventEnvelopeV1.contract.test.ts",
     "test:watch": "vitest"
   },
   "devDependencies": {

@@ -7,6 +7,7 @@ export type TrackTags = {
   environment?: string;
   template_id?: string;
   trace_id?: string;
+  run_id?: string;
   conversation_id?: string;
   span_id?: string;
   parent_span_id?: string;

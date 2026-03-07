@@ -32,3 +32,6 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Event envelope v1 compatibility
+        run: npm run test:schema-compat
