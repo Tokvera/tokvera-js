@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-03-07
+
+### Changed
+- Ingestion now treats non-2xx API responses as failed deliveries instead of silently succeeding.
+- Added retry classification for transient HTTP responses (`408`, `429`, `5xx`).
+- Added warning logs with HTTP status/details when ingestion ultimately fails.
+
+### Added
+- Test coverage for non-2xx ingest handling and warning behavior.
+
 ## [0.2.2] - 2026-03-07
 
 ### Added

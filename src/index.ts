@@ -25,6 +25,7 @@ import {
 const DEFAULT_TIMEOUT_MS = 2000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 250;
+const MAX_ERROR_BODY_LENGTH = 256;
 
 type AnyFunction = (...args: any[]) => Promise<any>;
 
@@ -51,6 +52,16 @@ type GeminiClientShape = {
     generate_content?: AnyFunction;
   };
 };
+
+type IngestResult =
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      status?: number;
+      message: string;
+    };
 
 type EventContract = {
   provider: TrackEvent["provider"];
@@ -628,7 +639,8 @@ export class TokveraLangChainCallbackHandler {
           : undefined,
     } as TrackEvent;
 
-    await sendWithRetry(event, this.options);
+    const ingestResult = await sendWithRetry(event, this.options);
+    logIngestFailure(ingestResult);
   }
 
   async handleLLMError(
@@ -673,7 +685,8 @@ export class TokveraLangChainCallbackHandler {
       },
     } as TrackEvent;
 
-    await sendWithRetry(event, this.options);
+    const ingestResult = await sendWithRetry(event, this.options);
+    logIngestFailure(ingestResult);
   }
 }
 
@@ -840,7 +853,8 @@ export const wrapVercelAIGenerateText = <
         tags,
         evaluation,
       } as TrackEvent;
-      await sendWithRetry(event, mergedOptions);
+      const ingestResult = await sendWithRetry(event, mergedOptions);
+      logIngestFailure(ingestResult);
       return result as Awaited<ReturnType<TFn>>;
     } catch (error) {
       const latencyMs = Date.now() - start;
@@ -865,7 +879,8 @@ export const wrapVercelAIGenerateText = <
           message: (error as Error)?.message,
         },
       } as TrackEvent;
-      await sendWithRetry(event, mergedOptions);
+      const ingestResult = await sendWithRetry(event, mergedOptions);
+      logIngestFailure(ingestResult);
       throw error;
     }
   };
@@ -909,9 +924,29 @@ const buildEvent = (
       : undefined,
 } as TrackEvent);
 
-const sendWithRetry = async (event: TrackEvent, options: TrackOptions) => {
+const isRetryableStatus = (status: number): boolean => status === 408 || status === 429 || status >= 500;
+
+const readResponseBody = async (response: Response): Promise<string | undefined> => {
+  try {
+    const body = (await response.text()).trim();
+    if (!body) return undefined;
+    return body.slice(0, MAX_ERROR_BODY_LENGTH);
+  } catch {
+    return undefined;
+  }
+};
+
+const logIngestFailure = (result: IngestResult): void => {
+  if (result.ok) return;
+  const statusPart = result.status ? ` (HTTP ${result.status})` : "";
+  if (typeof console?.warn === "function") {
+    console.warn(`[tokvera] ingestion failed${statusPart}: ${result.message}`);
+  }
+};
+
+const sendWithRetry = async (event: TrackEvent, options: TrackOptions): Promise<IngestResult> => {
   const url = options.ingest_url ?? options.ingestUrl ?? process.env.TOKVERA_INGEST_URL;
-  if (!url) return;
+  if (!url) return { ok: true };
 
   const apiKey = options.api_key ?? options.apiKey ?? process.env.TOKVERA_API_KEY;
 
@@ -929,20 +964,48 @@ const sendWithRetry = async (event: TrackEvent, options: TrackOptions) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     try {
-      await fetch(url, {
+      const response = await fetch(url, {
         method: "POST",
         headers,
         body: payload,
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      return;
+
+      if (response.ok) {
+        return { ok: true };
+      }
+
+      const body = await readResponseBody(response);
+      const message = body ?? response.statusText ?? "Ingest request failed with non-2xx response.";
+      if (attempt >= DEFAULT_MAX_RETRIES || !isRetryableStatus(response.status)) {
+        return {
+          ok: false,
+          status: response.status,
+          message,
+        };
+      }
     } catch {
       clearTimeout(timeoutId);
-      if (attempt >= DEFAULT_MAX_RETRIES) return;
+      if (attempt >= DEFAULT_MAX_RETRIES) {
+        return {
+          ok: false,
+          message: "Network error while sending event to Tokvera ingest endpoint.",
+        };
+      }
+      await sleep(DEFAULT_RETRY_DELAY_MS * (attempt + 1));
+      continue;
+    }
+
+    if (attempt < DEFAULT_MAX_RETRIES) {
       await sleep(DEFAULT_RETRY_DELAY_MS * (attempt + 1));
     }
   }
+
+  return {
+    ok: false,
+    message: "Failed to ingest event after retries.",
+  };
 };
 
 const wrapCreate = (
@@ -959,7 +1022,7 @@ const wrapCreate = (
       const response = await originalCreate(...args);
       const latencyMs = Date.now() - start;
       const event = buildEvent(contract, latencyMs, response, modelHint, tags, evaluation, "success");
-      void sendWithRetry(event, options);
+      void sendWithRetry(event, options).then(logIngestFailure);
       return response;
     } catch (error) {
       const latencyMs = Date.now() - start;
@@ -973,7 +1036,7 @@ const wrapCreate = (
         "failure",
         error as Error
       );
-      void sendWithRetry(event, options);
+      void sendWithRetry(event, options).then(logIngestFailure);
       throw error;
     }
   };

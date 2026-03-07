@@ -178,4 +178,41 @@ describe("trackOpenAI", () => {
     await flushPromises();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
+
+  it("treats non-2xx ingest responses as failures and logs warning", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 402,
+      statusText: "Payment Required",
+      text: vi.fn().mockResolvedValue('{"code":"PROJECT_HARD_CAP_REACHED"}'),
+    }) as any;
+
+    const response = {
+      id: "chat_3",
+      model: "gpt-4o-mini",
+      usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 },
+    };
+    const openaiClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(response),
+        },
+      },
+      responses: {
+        create: vi.fn(),
+      },
+    };
+
+    const tracked = trackOpenAI(openaiClient, { feature: "billing" });
+    const result = await tracked.chat.completions.create({ messages: [] });
+
+    expect(result).toBe(response);
+    await flushPromises();
+
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("ingestion failed");
+    expect(warnSpy.mock.calls[0][0]).toContain("HTTP 402");
+  });
 });
