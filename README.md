@@ -134,6 +134,52 @@ const tracked = trackOpenAI(openai, {
 });
 ```
 
+## Express Middleware Integration
+
+Use middleware to create request-level trace context and pass it into SDK calls.
+
+```ts
+import express from "express";
+import OpenAI from "openai";
+import {
+  createTokveraExpressMiddleware,
+  getTrackOptionsFromExpressRequest,
+  trackOpenAI,
+} from "@tokvera/sdk";
+
+const app = express();
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+app.use(
+  createTokveraExpressMiddleware({
+    feature: "support_bot",
+    tenant_id: (req) => req.user?.tenantId,
+    environment: "production",
+  })
+);
+
+app.post("/reply", async (req, res, next) => {
+  try {
+    const tracked = trackOpenAI(
+      openai,
+      getTrackOptionsFromExpressRequest(req, {
+        api_key: process.env.TOKVERA_API_KEY,
+        step_name: "draft_reply",
+      })
+    );
+
+    const result = await tracked.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Hello" }],
+    });
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+```
+
 ## Event Schema
 
 Canonical specification: [`tokvera-api/docs/EVENT_SCHEMA.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/EVENT_SCHEMA.md)

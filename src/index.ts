@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import {
   type AnthropicTrackEvent,
+  type ExpressLikeNext,
+  type ExpressLikeRequest,
+  type ExpressLikeResponse,
+  type ExpressMiddlewareOptions,
+  type ExpressValueResolver,
   type GeminiTrackEvent,
   type OpenAITrackEvent,
   type TrackEvaluation,
@@ -155,6 +160,154 @@ const getEvaluation = (options: TrackOptions): TrackEvaluation | undefined => {
   }
 
   return evaluation;
+};
+
+const readHeaderValue = (request: ExpressLikeRequest, headerName: string): string | undefined => {
+  if (!request || !request.headers) return undefined;
+  const headers = request.headers;
+  const lowerHeaderName = headerName.toLowerCase();
+
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== lowerHeaderName) continue;
+    if (Array.isArray(value)) return toTagValue(value[0]);
+    return toTagValue(value);
+  }
+
+  return undefined;
+};
+
+const resolveRequestValue = <T>(
+  resolver: ExpressValueResolver<T> | undefined,
+  request: ExpressLikeRequest
+): T | undefined => {
+  if (resolver === undefined) return undefined;
+  if (typeof resolver === "function") {
+    const resolved = (resolver as (request: ExpressLikeRequest) => T | undefined | null)(request);
+    return resolved ?? undefined;
+  }
+  return resolver;
+};
+
+const resolveRequestTag = (
+  resolver: ExpressValueResolver<string> | undefined,
+  request: ExpressLikeRequest
+): string | undefined => {
+  const resolved = resolveRequestValue(resolver, request);
+  return toTagValue(resolved);
+};
+
+const resolveRequestFeedbackScore = (
+  resolver: ExpressValueResolver<number | string> | undefined,
+  request: ExpressLikeRequest
+): number | undefined => {
+  const resolved = resolveRequestValue(resolver, request);
+  return toOptionalFiniteNumber(resolved);
+};
+
+const deriveRequestStepName = (request: ExpressLikeRequest): string | undefined => {
+  const path =
+    toTagValue(request.path) ??
+    toTagValue(request.originalUrl) ??
+    toTagValue(request.url);
+  if (!path) return undefined;
+
+  const method = toTagValue(request.method)?.toLowerCase();
+  return method ? `${method} ${path}` : path;
+};
+
+const withDefinedTrackOptions = (options: TrackOptions): TrackOptions => {
+  const normalized: TrackOptions = {};
+  for (const [key, value] of Object.entries(options)) {
+    if (value === undefined || value === null) continue;
+    (normalized as Record<string, unknown>)[key] = value;
+  }
+  return normalized;
+};
+
+export const createTokveraExpressMiddleware = (
+  options: ExpressMiddlewareOptions = {}
+) => {
+  const traceHeaderName = toTagValue(options.traceHeaderName) ?? "x-tokvera-trace-id";
+  const runHeaderName = toTagValue(options.runHeaderName) ?? "x-tokvera-run-id";
+  const conversationHeaderName =
+    toTagValue(options.conversationHeaderName) ?? "x-tokvera-conversation-id";
+  const responseTraceHeaderName =
+    toTagValue(options.responseTraceHeaderName) ?? traceHeaderName;
+
+  return (request: ExpressLikeRequest, response: ExpressLikeResponse, next: ExpressLikeNext) => {
+    const traceId = readHeaderValue(request, traceHeaderName) ?? generateTraceId();
+    const runId = resolveRequestTag(options.run_id, request) ?? readHeaderValue(request, runHeaderName);
+    const conversationId =
+      resolveRequestTag(options.conversation_id, request) ??
+      readHeaderValue(request, conversationHeaderName);
+    const feedbackScore = resolveRequestFeedbackScore(options.feedback_score, request);
+
+    const requestContext = withDefinedTrackOptions({
+      feature: resolveRequestTag(options.feature, request),
+      tenant_id: resolveRequestTag(options.tenant_id, request),
+      customer_id: resolveRequestTag(options.customer_id, request),
+      attempt_type: resolveRequestTag(options.attempt_type, request),
+      plan: resolveRequestTag(options.plan, request),
+      environment: resolveRequestTag(options.environment, request),
+      template_id: resolveRequestTag(options.template_id, request),
+      trace_id: traceId,
+      run_id: runId,
+      conversation_id: conversationId,
+      span_id: generateSpanId(),
+      parent_span_id: resolveRequestTag(options.parent_span_id, request),
+      step_name: resolveRequestTag(options.step_name, request) ?? deriveRequestStepName(request),
+      outcome: resolveRequestTag(options.outcome, request),
+      retry_reason: resolveRequestTag(options.retry_reason, request),
+      fallback_reason: resolveRequestTag(options.fallback_reason, request),
+      quality_label: resolveRequestTag(options.quality_label, request),
+      feedback_score: feedbackScore,
+    });
+
+    request.tokvera = requestContext;
+
+    if (response && typeof response.setHeader === "function") {
+      response.setHeader(responseTraceHeaderName, traceId);
+    }
+
+    if (response) {
+      const locals =
+        response.locals && typeof response.locals === "object"
+          ? response.locals
+          : {};
+      (locals as Record<string, unknown>).tokvera = requestContext;
+      response.locals = locals;
+    }
+
+    next();
+  };
+};
+
+export const getTrackOptionsFromExpressRequest = (
+  request: ExpressLikeRequest,
+  overrides: TrackOptions = {}
+): TrackOptions => {
+  const requestContext = request?.tokvera ?? {};
+  const traceId =
+    toTagValue(overrides.trace_id) ??
+    toTagValue(requestContext.trace_id) ??
+    readHeaderValue(request, "x-tokvera-trace-id") ??
+    generateTraceId();
+
+  const requestSpanId = toTagValue(requestContext.span_id);
+  const parentSpanId =
+    toTagValue(overrides.parent_span_id) ??
+    toTagValue(requestContext.parent_span_id) ??
+    requestSpanId;
+
+  const merged = withDefinedTrackOptions({
+    ...requestContext,
+    ...overrides,
+    trace_id: traceId,
+    span_id: toTagValue(overrides.span_id) ?? generateSpanId(),
+    parent_span_id: parentSpanId,
+  });
+
+  return merged;
 };
 
 const extractModelFromArgs = (args: any[]): string | undefined => {
@@ -373,6 +526,11 @@ export const trackGemini = <T extends GeminiClientShape>(
 
 export type {
   AnthropicTrackEvent,
+  ExpressLikeNext,
+  ExpressLikeRequest,
+  ExpressLikeResponse,
+  ExpressMiddlewareOptions,
+  ExpressValueResolver,
   GeminiTrackEvent,
   OpenAITrackEvent,
   TrackEvaluation,

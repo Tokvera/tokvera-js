@@ -27,6 +27,53 @@ export type TrackEvaluation = {
   feedback_score?: number | string;
 };
 
+export type ExpressHeaderValue = string | string[] | undefined;
+
+export type ExpressLikeRequest = {
+  headers?: Record<string, ExpressHeaderValue>;
+  method?: string;
+  path?: string;
+  originalUrl?: string;
+  url?: string;
+  tokvera?: TrackOptions;
+  [key: string]: unknown;
+};
+
+export type ExpressLikeResponse = {
+  setHeader?: (name: string, value: string) => void;
+  locals?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+export type ExpressLikeNext = (error?: unknown) => void;
+
+export type ExpressValueResolver<T> =
+  | T
+  | ((request: ExpressLikeRequest) => T | undefined | null);
+
+export type ExpressMiddlewareOptions = {
+  traceHeaderName?: string;
+  runHeaderName?: string;
+  conversationHeaderName?: string;
+  responseTraceHeaderName?: string;
+  step_name?: ExpressValueResolver<string>;
+  feature?: ExpressValueResolver<string>;
+  tenant_id?: ExpressValueResolver<string>;
+  customer_id?: ExpressValueResolver<string>;
+  attempt_type?: ExpressValueResolver<string>;
+  plan?: ExpressValueResolver<string>;
+  environment?: ExpressValueResolver<string>;
+  template_id?: ExpressValueResolver<string>;
+  run_id?: ExpressValueResolver<string>;
+  conversation_id?: ExpressValueResolver<string>;
+  parent_span_id?: ExpressValueResolver<string>;
+  outcome?: ExpressValueResolver<string>;
+  retry_reason?: ExpressValueResolver<string>;
+  fallback_reason?: ExpressValueResolver<string>;
+  quality_label?: ExpressValueResolver<string>;
+  feedback_score?: ExpressValueResolver<number | string>;
+};
+
 export type TrackOptions = TrackTags &
   TrackEvaluation & {
   api_key?: string;
