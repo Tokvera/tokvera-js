@@ -15,6 +15,7 @@ const EXPECTED = {
     "usage",
     "tags",
   ],
+  optional_top_level_fields: ["prompt_hash", "response_hash", "error", "evaluation"],
   status_values: ["success", "failure"],
   provider_contracts: {
     openai: {
@@ -31,6 +32,26 @@ const EXPECTED = {
     },
   },
   usage_fields: ["prompt_tokens", "completion_tokens", "total_tokens"],
+  allowed_tag_fields: [
+    "feature",
+    "tenant_id",
+    "customer_id",
+    "attempt_type",
+    "plan",
+    "environment",
+    "template_id",
+    "trace_id",
+    "run_id",
+    "conversation_id",
+    "span_id",
+    "parent_span_id",
+    "step_name",
+    "outcome",
+    "retry_reason",
+    "fallback_reason",
+    "quality_label",
+    "feedback_score",
+  ],
   evaluation_fields: [
     "outcome",
     "retry_reason",
@@ -38,6 +59,12 @@ const EXPECTED = {
     "quality_label",
     "feedback_score",
   ],
+  compatibility_policy: {
+    additive_optional_fields: true,
+    required_fields_require_schema_bump: true,
+    semantic_changes_require_schema_bump: true,
+    deprecations_require_staged_rollout: true,
+  },
 };
 
 function asSortedSet(values) {
@@ -81,9 +108,31 @@ async function main() {
   assertEqual(schema.envelope_version, EXPECTED.envelope_version, "envelope_version");
   assertEqual(schema.schema_version, EXPECTED.schema_version, "schema_version");
   assertSetEqual(schema.required_top_level_fields || [], EXPECTED.required_top_level_fields, "required_top_level_fields");
+  assertSetEqual(schema.optional_top_level_fields || [], EXPECTED.optional_top_level_fields, "optional_top_level_fields");
   assertSetEqual(schema.status_values || [], EXPECTED.status_values, "status_values");
   assertSetEqual(schema.usage_fields || [], EXPECTED.usage_fields, "usage_fields");
+  assertSetEqual(schema.allowed_tag_fields || [], EXPECTED.allowed_tag_fields, "allowed_tag_fields");
   assertSetEqual(schema.evaluation_fields || [], EXPECTED.evaluation_fields, "evaluation_fields");
+  assertEqual(
+    Boolean(schema.compatibility_policy?.additive_optional_fields),
+    EXPECTED.compatibility_policy.additive_optional_fields,
+    "compatibility_policy.additive_optional_fields"
+  );
+  assertEqual(
+    Boolean(schema.compatibility_policy?.required_fields_require_schema_bump),
+    EXPECTED.compatibility_policy.required_fields_require_schema_bump,
+    "compatibility_policy.required_fields_require_schema_bump"
+  );
+  assertEqual(
+    Boolean(schema.compatibility_policy?.semantic_changes_require_schema_bump),
+    EXPECTED.compatibility_policy.semantic_changes_require_schema_bump,
+    "compatibility_policy.semantic_changes_require_schema_bump"
+  );
+  assertEqual(
+    Boolean(schema.compatibility_policy?.deprecations_require_staged_rollout),
+    EXPECTED.compatibility_policy.deprecations_require_staged_rollout,
+    "compatibility_policy.deprecations_require_staged_rollout"
+  );
 
   for (const [provider, expectedContract] of Object.entries(EXPECTED.provider_contracts)) {
     const actualContract = schema.provider_contracts?.[provider];
