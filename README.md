@@ -234,7 +234,9 @@ const result = await trackedGenerateText({
 
 ## Event Schema
 
-Canonical specification: [`tokvera-api/docs/EVENT_SCHEMA.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/EVENT_SCHEMA.md)
+Canonical specification: [`tokvera-api/docs/CANONICAL_EVENT_ENVELOPE_V1.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/CANONICAL_EVENT_ENVELOPE_V1.md)
+
+Versioning and deprecation policy: [`tokvera-api/docs/SCHEMA_COMPATIBILITY_POLICY.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/SCHEMA_COMPATIBILITY_POLICY.md)
 
 Events include:
 - `schema_version`: `2026-02-16`
@@ -248,6 +250,8 @@ Events include:
 - `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
 - Evaluation signals (optional): `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score` (emitted in `tags` and top-level `evaluation`)
 - `error` on failure events
+
+The API uses strict v1 validation. Unknown top-level, usage, tag, evaluation, or error fields are rejected.
 
 `trace_id` and `span_id` are auto-generated per request if not provided.
 

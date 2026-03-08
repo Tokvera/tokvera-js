@@ -10,6 +10,53 @@ type CanonicalExpectations = {
   status: "success" | "failure";
 };
 
+const allowedTopLevelFields = new Set([
+  "schema_version",
+  "event_type",
+  "provider",
+  "endpoint",
+  "status",
+  "timestamp",
+  "latency_ms",
+  "model",
+  "usage",
+  "tags",
+  "prompt_hash",
+  "response_hash",
+  "error",
+  "evaluation",
+]);
+
+const allowedUsageFields = new Set(["prompt_tokens", "completion_tokens", "total_tokens"]);
+const allowedTagFields = new Set([
+  "feature",
+  "tenant_id",
+  "customer_id",
+  "attempt_type",
+  "plan",
+  "environment",
+  "template_id",
+  "trace_id",
+  "run_id",
+  "conversation_id",
+  "span_id",
+  "parent_span_id",
+  "step_name",
+  "outcome",
+  "retry_reason",
+  "fallback_reason",
+  "quality_label",
+  "feedback_score",
+]);
+const allowedEvaluationFields = new Set([
+  "outcome",
+  "retry_reason",
+  "fallback_reason",
+  "quality_label",
+  "feedback_score",
+]);
+const allowedErrorFields = new Set(["type", "message"]);
+
 const assertCanonicalEnvelopeV1 = (event: any, expected: CanonicalExpectations) => {
   expect(event.schema_version).toBe("2026-02-16");
   expect(event.provider).toBe(expected.provider);
@@ -28,10 +75,34 @@ const assertCanonicalEnvelopeV1 = (event: any, expected: CanonicalExpectations) 
   expect(event.usage.completion_tokens).toBeGreaterThanOrEqual(0);
   expect(event.usage.total_tokens).toBeGreaterThanOrEqual(0);
 
+  const unknownTopLevel = Object.keys(event).filter((field) => !allowedTopLevelFields.has(field));
+  expect(unknownTopLevel, `unknown top-level fields: ${unknownTopLevel.join(",")}`).toHaveLength(0);
+
+  const unknownUsageFields = Object.keys(event.usage ?? {}).filter((field) => !allowedUsageFields.has(field));
+  expect(unknownUsageFields, `unknown usage fields: ${unknownUsageFields.join(",")}`).toHaveLength(0);
+
   expect(typeof event.tags?.trace_id).toBe("string");
   expect(event.tags.trace_id.length).toBeGreaterThan(0);
   expect(typeof event.tags?.span_id).toBe("string");
   expect(event.tags.span_id.length).toBeGreaterThan(0);
+
+  const unknownTagFields = Object.keys(event.tags ?? {}).filter((field) => !allowedTagFields.has(field));
+  expect(unknownTagFields, `unknown tag fields: ${unknownTagFields.join(",")}`).toHaveLength(0);
+
+  if (event.evaluation) {
+    const unknownEvaluationFields = Object.keys(event.evaluation).filter(
+      (field) => !allowedEvaluationFields.has(field)
+    );
+    expect(
+      unknownEvaluationFields,
+      `unknown evaluation fields: ${unknownEvaluationFields.join(",")}`
+    ).toHaveLength(0);
+  }
+
+  if (event.error) {
+    const unknownErrorFields = Object.keys(event.error).filter((field) => !allowedErrorFields.has(field));
+    expect(unknownErrorFields, `unknown error fields: ${unknownErrorFields.join(",")}`).toHaveLength(0);
+  }
 };
 
 describe("event envelope v1 compatibility", () => {
