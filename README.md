@@ -101,7 +101,7 @@ await tracked.models.generateContent({
 Set ingestion endpoint and API key:
 
 ```bash
-export TOKVERA_INGEST_URL="https://api.tokvera.com/v1/events"
+export TOKVERA_INGEST_URL="https://api.tokvera.org/v1/events"
 export TOKVERA_API_KEY="tokvera_project_key"
 ```
 
@@ -226,6 +226,11 @@ const result = await trackedGenerateText({
   messages: [{ role: "user", content: "Hello" }],
 });
 ```
+
+## Examples
+
+- `examples/quickstart.ts`: basic OpenAI instrumentation.
+- `examples/express-middleware.ts`: request-scoped trace context propagation with Express.
 
 ## Event Schema
 
