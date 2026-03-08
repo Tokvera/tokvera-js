@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import {
   type AnthropicTrackEvent,
+  type BackgroundJobContext,
+  type BackgroundJobContextOptions,
   type ExpressLikeNext,
   type ExpressLikeRequest,
   type ExpressLikeResponse,
@@ -95,6 +97,7 @@ const toOptionalFiniteNumber = (value: unknown): number | undefined => {
 };
 
 const generateTraceId = () => `trc_${crypto.randomUUID().replace(/-/g, "")}`;
+const generateRunId = () => `run_${crypto.randomUUID().replace(/-/g, "")}`;
 const generateSpanId = () => `spn_${crypto.randomUUID().replace(/-/g, "")}`;
 
 const getOpenAIUsage = (response: any): Usage => {
@@ -326,6 +329,70 @@ export const getTrackOptionsFromExpressRequest = (
   });
 
   return merged;
+};
+
+export const createTokveraBackgroundJobContext = (
+  options: BackgroundJobContextOptions = {}
+): BackgroundJobContext => {
+  const traceId = toTagValue(options.trace_id) ?? generateTraceId();
+  const runId = toTagValue(options.run_id) ?? generateRunId();
+  const rootSpanId =
+    toTagValue(options.root_span_id) ??
+    toTagValue(options.span_id) ??
+    generateSpanId();
+
+  const baseTrackOptions = withDefinedTrackOptions({
+    ...options,
+    trace_id: traceId,
+    run_id: runId,
+    span_id: rootSpanId,
+    parent_span_id: toTagValue(options.parent_span_id),
+    conversation_id: toTagValue(options.conversation_id),
+  });
+
+  return {
+    job_id: toTagValue(options.job_id),
+    trace_id: traceId,
+    run_id: runId,
+    conversation_id: toTagValue(options.conversation_id),
+    root_span_id: rootSpanId,
+    base_track_options: baseTrackOptions,
+  };
+};
+
+export const getTrackOptionsFromBackgroundJobContext = (
+  context: BackgroundJobContext,
+  overrides: TrackOptions = {}
+): TrackOptions => {
+  const traceId =
+    toTagValue(overrides.trace_id) ??
+    toTagValue(context.trace_id) ??
+    toTagValue(context.base_track_options?.trace_id) ??
+    generateTraceId();
+
+  const runId =
+    toTagValue(overrides.run_id) ??
+    toTagValue(context.run_id) ??
+    toTagValue(context.base_track_options?.run_id) ??
+    generateRunId();
+
+  const parentSpanId =
+    toTagValue(overrides.parent_span_id) ??
+    toTagValue(context.root_span_id) ??
+    toTagValue(context.base_track_options?.span_id);
+
+  return withDefinedTrackOptions({
+    ...context.base_track_options,
+    ...overrides,
+    trace_id: traceId,
+    run_id: runId,
+    conversation_id:
+      toTagValue(overrides.conversation_id) ??
+      toTagValue(context.conversation_id) ??
+      toTagValue(context.base_track_options?.conversation_id),
+    span_id: toTagValue(overrides.span_id) ?? generateSpanId(),
+    parent_span_id: parentSpanId,
+  });
 };
 
 type ProviderContract = {
@@ -1150,6 +1217,8 @@ export const trackGemini = <T extends GeminiClientShape>(
 
 export type {
   AnthropicTrackEvent,
+  BackgroundJobContext,
+  BackgroundJobContextOptions,
   ExpressLikeNext,
   ExpressLikeRequest,
   ExpressLikeResponse,

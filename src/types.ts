@@ -137,6 +137,20 @@ export type TrackOptions = TrackTags &
   ingestUrl?: string;
 };
 
+export type BackgroundJobContextOptions = TrackOptions & {
+  job_id?: string;
+  root_span_id?: string;
+};
+
+export type BackgroundJobContext = {
+  job_id?: string;
+  trace_id: string;
+  run_id: string;
+  conversation_id?: string;
+  root_span_id: string;
+  base_track_options: TrackOptions;
+};
+
 export type Usage = {
   prompt_tokens: number;
   completion_tokens: number;

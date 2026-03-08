@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Background job instrumentation helpers:
+  - `createTokveraBackgroundJobContext(...)`
+  - `getTrackOptionsFromBackgroundJobContext(...)`
+- Background worker example for stable trace/run propagation across async steps.
+
 ## [0.2.3] - 2026-03-07
 
 ### Changed

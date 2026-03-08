@@ -183,6 +183,41 @@ app.post("/reply", async (req, res, next) => {
 });
 ```
 
+## Background Job Integration
+
+Use helpers to keep `trace_id` and `run_id` stable across async worker steps while emitting child spans per step.
+
+```ts
+import OpenAI from "openai";
+import {
+  createTokveraBackgroundJobContext,
+  getTrackOptionsFromBackgroundJobContext,
+  trackOpenAI,
+} from "@tokvera/sdk";
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const jobContext = createTokveraBackgroundJobContext({
+  job_id: "job_20260308_001",
+  feature: "daily_summary",
+  tenant_id: "acme",
+  environment: "production",
+});
+
+const tracked = trackOpenAI(
+  openai,
+  getTrackOptionsFromBackgroundJobContext(jobContext, {
+    api_key: process.env.TOKVERA_API_KEY,
+    step_name: "generate_summary",
+  })
+);
+
+await tracked.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Summarize yesterday incidents." }],
+});
+```
+
 ## LangChain Callback Integration
 
 Use a callback handler to emit Tokvera events for LangChain LLM runs.
@@ -231,6 +266,7 @@ const result = await trackedGenerateText({
 
 - `examples/quickstart.ts`: basic OpenAI instrumentation.
 - `examples/express-middleware.ts`: request-scoped trace context propagation with Express.
+- `examples/background-jobs.ts`: background worker/job trace propagation.
 
 ## Event Schema
 
