@@ -19,6 +19,37 @@ export type TrackTags = {
   feedback_score?: string | number;
 };
 
+export type SpanKind = "model" | "tool" | "orchestrator" | "retrieval" | "guardrail";
+
+export type TracePayloadType =
+  | "prompt_input"
+  | "tool_input"
+  | "tool_output"
+  | "model_output"
+  | "context"
+  | "other";
+
+export type TracePayloadBlock = {
+  payload_type: TracePayloadType;
+  content: string;
+};
+
+export type TraceMetrics = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  cost_usd?: number;
+  estimated_cost_usd?: number;
+  latency_ms?: number;
+};
+
+export type TraceDecision = {
+  retry_reason?: string;
+  fallback_reason?: string;
+  routing_reason?: string;
+  route?: string;
+};
+
 export type TrackEvaluation = {
   outcome?: string;
   retry_reason?: string;
@@ -135,6 +166,23 @@ export type TrackOptions = TrackTags &
   apiKey?: string;
   ingest_url?: string;
   ingestUrl?: string;
+  schema_version?: "2026-02-16" | "2026-04-01";
+  schemaVersion?: "2026-02-16" | "2026-04-01";
+  capture_content?: boolean;
+  captureContent?: boolean;
+  span_kind?: SpanKind;
+  spanKind?: SpanKind;
+  tool_name?: string;
+  toolName?: string;
+  metrics?: TraceMetrics;
+  decision?: TraceDecision;
+  routing_reason?: string;
+  routingReason?: string;
+  route?: string;
+  payload_refs?: string[];
+  payloadRefs?: string[];
+  payload_blocks?: TracePayloadBlock[];
+  payloadBlocks?: TracePayloadBlock[];
 };
 
 export type BackgroundJobContextOptions = TrackOptions & {
@@ -163,7 +211,7 @@ export type TrackError = {
 };
 
 type BaseTrackEvent = {
-  schema_version: "2026-02-16";
+  schema_version: "2026-02-16" | "2026-04-01";
   status: "success" | "failure";
   timestamp: string;
   latency_ms: number;
@@ -173,6 +221,12 @@ type BaseTrackEvent = {
   evaluation?: TrackEvaluation;
   prompt_hash?: string;
   response_hash?: string;
+  span_kind?: SpanKind;
+  tool_name?: string;
+  payload_refs?: string[];
+  payload_blocks?: TracePayloadBlock[];
+  metrics?: TraceMetrics;
+  decision?: TraceDecision;
   error?: TrackError;
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "@tokvera/sdk",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Tokvera TypeScript SDK for OpenAI, Anthropic, and Gemini call tracking.",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "test": "vitest run",
-    "test:schema-compat": "vitest run tests/eventEnvelopeV1.contract.test.ts",
+    "test:schema-compat": "vitest run tests/eventEnvelopeV1.contract.test.ts tests/eventEnvelopeV2.contract.test.ts",
     "test:canonical-contract": "node scripts/check-canonical-contract.mjs",
     "test:watch": "vitest"
   },

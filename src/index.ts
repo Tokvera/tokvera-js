@@ -17,6 +17,9 @@ import {
   type TrackEvent,
   type TrackOptions,
   type TrackTags,
+  type TraceDecision,
+  type TraceMetrics,
+  type TracePayloadBlock,
   type Usage,
   type VercelAICallParams,
   type VercelAIResult,
@@ -28,6 +31,18 @@ const DEFAULT_TIMEOUT_MS = 2000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 250;
 const MAX_ERROR_BODY_LENGTH = 256;
+const TRACE_SCHEMA_VERSION_V1 = "2026-02-16";
+const TRACE_SCHEMA_VERSION_V2 = "2026-04-01";
+
+const ALLOWED_SPAN_KINDS = new Set(["model", "tool", "orchestrator", "retrieval", "guardrail"]);
+const ALLOWED_TRACE_PAYLOAD_TYPES = new Set([
+  "prompt_input",
+  "tool_input",
+  "tool_output",
+  "model_output",
+  "context",
+  "other",
+]);
 
 type AnyFunction = (...args: any[]) => Promise<any>;
 
@@ -94,6 +109,100 @@ const toOptionalFiniteNumber = (value: unknown): number | undefined => {
   if (trimmed.length === 0) return undefined;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const toSchemaVersion = (
+  value: unknown
+): "2026-02-16" | "2026-04-01" | undefined => {
+  if (value === TRACE_SCHEMA_VERSION_V1 || value === TRACE_SCHEMA_VERSION_V2) {
+    return value;
+  }
+  return undefined;
+};
+
+const toSpanKind = (value: unknown): TrackEvent["span_kind"] | undefined => {
+  const normalized = toTagValue(value);
+  if (!normalized) return undefined;
+  return ALLOWED_SPAN_KINDS.has(normalized) ? (normalized as TrackEvent["span_kind"]) : undefined;
+};
+
+const toTracePayloadType = (value: unknown): TracePayloadBlock["payload_type"] => {
+  const normalized = toTagValue(value);
+  if (!normalized) return "other";
+  if (normalized === "prompt") return "prompt_input";
+  return ALLOWED_TRACE_PAYLOAD_TYPES.has(normalized)
+    ? (normalized as TracePayloadBlock["payload_type"])
+    : "other";
+};
+
+const normalizeTracePayloadBlocks = (value: unknown): TracePayloadBlock[] => {
+  if (!Array.isArray(value)) return [];
+  const blocks: TracePayloadBlock[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const payloadType = toTracePayloadType(
+      (item as Record<string, unknown>).payload_type ?? (item as Record<string, unknown>).payloadType
+    );
+    const content = String((item as Record<string, unknown>).content ?? "").trim();
+    if (!content) continue;
+    blocks.push({
+      payload_type: payloadType,
+      content,
+    });
+  }
+  return blocks;
+};
+
+const normalizeTraceMetrics = (value: unknown): TraceMetrics | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Record<string, unknown>;
+  const metrics: TraceMetrics = {};
+  const promptTokens = toOptionalFiniteNumber(source.prompt_tokens);
+  const completionTokens = toOptionalFiniteNumber(source.completion_tokens);
+  const totalTokens = toOptionalFiniteNumber(source.total_tokens);
+  const costUsd =
+    toOptionalFiniteNumber(source.cost_usd) ??
+    toOptionalFiniteNumber(source.estimated_cost_usd);
+  const latencyMs = toOptionalFiniteNumber(source.latency_ms);
+  if (promptTokens !== undefined) metrics.prompt_tokens = promptTokens;
+  if (completionTokens !== undefined) metrics.completion_tokens = completionTokens;
+  if (totalTokens !== undefined) metrics.total_tokens = totalTokens;
+  if (costUsd !== undefined) metrics.cost_usd = costUsd;
+  if (latencyMs !== undefined) metrics.latency_ms = latencyMs;
+  return Object.keys(metrics).length > 0 ? metrics : undefined;
+};
+
+const normalizeTraceDecision = (value: unknown): TraceDecision | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Record<string, unknown>;
+  const decision: TraceDecision = {
+    retry_reason: toTagValue(source.retry_reason),
+    fallback_reason: toTagValue(source.fallback_reason),
+    routing_reason: toTagValue(source.routing_reason),
+    route: toTagValue(source.route),
+  };
+  if (
+    decision.retry_reason === undefined &&
+    decision.fallback_reason === undefined &&
+    decision.routing_reason === undefined &&
+    decision.route === undefined
+  ) {
+    return undefined;
+  }
+  return decision;
+};
+
+const normalizePayloadRefs = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => toTagValue(item))
+    .filter((item): item is string => Boolean(item));
+};
+
+const hashContent = (content: string | undefined): string | undefined => {
+  const normalized = typeof content === "string" ? content.trim() : "";
+  if (!normalized) return undefined;
+  return crypto.createHash("sha256").update(normalized, "utf8").digest("hex");
 };
 
 const generateTraceId = () => `trc_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -407,6 +516,7 @@ type LangChainRunSnapshot = {
   model?: string;
   tags: TrackTags;
   evaluation?: TrackEvaluation;
+  promptContent?: string;
 };
 
 const sanitizeIdComponent = (value: unknown): string => {
@@ -549,9 +659,36 @@ const extractLangChainUsage = (result: LangChainLLMResult | undefined): Usage =>
   };
 };
 
+const extractLangChainResponseText = (result: LangChainLLMResult | undefined): string | undefined => {
+  if (!result) return undefined;
+  const generations = Array.isArray(result.generations) ? result.generations : [];
+  const parts: string[] = [];
+  for (const generationGroup of generations) {
+    const group = Array.isArray(generationGroup) ? generationGroup : [generationGroup];
+    for (const generation of group) {
+      if (!generation || typeof generation !== "object") continue;
+      const directText = toTagValue((generation as Record<string, unknown>).text);
+      if (directText) {
+        parts.push(directText);
+        continue;
+      }
+      const message = (generation as Record<string, unknown>).message;
+      const messageContent = toTagValue(
+        message && typeof message === "object"
+          ? (message as Record<string, unknown>).content
+          : undefined
+      );
+      if (messageContent) parts.push(messageContent);
+    }
+  }
+  if (parts.length === 0) return undefined;
+  return parts.join("\n");
+};
+
 const deriveLangChainSnapshot = (
   options: LangChainCallbackOptions,
   serialized: LangChainSerialized | undefined,
+  prompts: string[] | undefined,
   runId: string,
   parentRunId: string | undefined,
   extraParams: Record<string, unknown> | undefined,
@@ -632,6 +769,7 @@ const deriveLangChainSnapshot = (
     model,
     tags: getTags(mergedOptions),
     evaluation: getEvaluation(mergedOptions),
+    promptContent: Array.isArray(prompts) && prompts.length > 0 ? toStableJson(prompts) : undefined,
   };
 };
 
@@ -647,7 +785,7 @@ export class TokveraLangChainCallbackHandler {
 
   async handleLLMStart(
     serialized: LangChainSerialized,
-    _prompts: string[],
+    prompts: string[],
     runId: string,
     parentRunId?: string,
     extraParams?: Record<string, unknown>,
@@ -661,6 +799,7 @@ export class TokveraLangChainCallbackHandler {
     const snapshot = deriveLangChainSnapshot(
       this.options,
       serialized,
+      prompts,
       runKey,
       parentKey,
       extraParams,
@@ -678,12 +817,22 @@ export class TokveraLangChainCallbackHandler {
     const runKey = String(runId);
     const snapshot =
       this.runs.get(runKey) ??
-      deriveLangChainSnapshot(this.options, undefined, runKey, undefined, undefined, undefined, undefined, undefined);
+      deriveLangChainSnapshot(
+        this.options,
+        undefined,
+        undefined,
+        runKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined
+      );
     this.runs.delete(runKey);
 
     const latencyMs = Math.max(0, Date.now() - snapshot.startedAt);
     const usage = extractLangChainUsage(output);
-    const event = {
+    const baseEvent = {
       schema_version: "2026-02-16",
       event_type: snapshot.contract.event_type,
       provider: snapshot.contract.provider,
@@ -705,6 +854,11 @@ export class TokveraLangChainCallbackHandler {
             }
           : undefined,
     } as TrackEvent;
+    const event = decorateEventWithTraceV2(baseEvent, {
+      options: this.options,
+      promptContent: snapshot.promptContent,
+      responseContent: extractLangChainResponseText(output),
+    });
 
     const ingestResult = await sendWithRetry(event, this.options);
     logIngestFailure(ingestResult);
@@ -717,11 +871,21 @@ export class TokveraLangChainCallbackHandler {
     const runKey = String(runId);
     const snapshot =
       this.runs.get(runKey) ??
-      deriveLangChainSnapshot(this.options, undefined, runKey, undefined, undefined, undefined, undefined, undefined);
+      deriveLangChainSnapshot(
+        this.options,
+        undefined,
+        undefined,
+        runKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined
+      );
     this.runs.delete(runKey);
 
     const latencyMs = Math.max(0, Date.now() - snapshot.startedAt);
-    const event = {
+    const baseEvent = {
       schema_version: "2026-02-16",
       event_type: snapshot.contract.event_type,
       provider: snapshot.contract.provider,
@@ -751,6 +915,10 @@ export class TokveraLangChainCallbackHandler {
         message: error?.message,
       },
     } as TrackEvent;
+    const event = decorateEventWithTraceV2(baseEvent, {
+      options: this.options,
+      promptContent: snapshot.promptContent,
+    });
 
     const ingestResult = await sendWithRetry(event, this.options);
     logIngestFailure(ingestResult);
@@ -848,6 +1016,30 @@ const extractUsageFromVercelResult = (result: VercelAIResult | undefined): Usage
   };
 };
 
+const extractPromptFromVercelParams = (params: VercelAICallParams | undefined): string | undefined => {
+  if (!params || typeof params !== "object") return undefined;
+  const candidate =
+    (params as Record<string, unknown>).messages ??
+    (params as Record<string, unknown>).input ??
+    (params as Record<string, unknown>).prompt ??
+    (params as Record<string, unknown>).contents;
+  if (candidate === undefined) return undefined;
+  return toStableJson(candidate);
+};
+
+const extractResponseFromVercelResult = (result: VercelAIResult | undefined): string | undefined => {
+  if (!result) return undefined;
+  const text =
+    toTagValue((result as Record<string, unknown>).text) ??
+    toTagValue((result as Record<string, unknown>).output_text);
+  if (text) return text;
+  const response = (result as Record<string, unknown>).response;
+  if (response && typeof response === "object") {
+    return extractResponseContent(response);
+  }
+  return undefined;
+};
+
 const buildVercelEventContract = (
   options: VercelAITrackOptions,
   model: string | undefined
@@ -897,6 +1089,7 @@ export const wrapVercelAIGenerateText = <
     });
     const tags = getTags(mergedOptions);
     const evaluation = getEvaluation(mergedOptions);
+    const promptContent = extractPromptFromVercelParams(params);
 
     const modelHint =
       toTagValue(mergedOptions.model) ??
@@ -907,7 +1100,7 @@ export const wrapVercelAIGenerateText = <
       const result = await generateText(params);
       const latencyMs = Date.now() - start;
       const model = modelHint ?? inferModelFromVercelResult(result);
-      const event = {
+      const baseEvent = {
         schema_version: "2026-02-16",
         event_type: contract.event_type,
         provider: contract.provider,
@@ -920,12 +1113,17 @@ export const wrapVercelAIGenerateText = <
         tags,
         evaluation,
       } as TrackEvent;
+      const event = decorateEventWithTraceV2(baseEvent, {
+        options: mergedOptions,
+        promptContent,
+        responseContent: extractResponseFromVercelResult(result),
+      });
       const ingestResult = await sendWithRetry(event, mergedOptions);
       logIngestFailure(ingestResult);
       return result as Awaited<ReturnType<TFn>>;
     } catch (error) {
       const latencyMs = Date.now() - start;
-      const event = {
+      const baseEvent = {
         schema_version: "2026-02-16",
         event_type: contract.event_type,
         provider: contract.provider,
@@ -946,6 +1144,10 @@ export const wrapVercelAIGenerateText = <
           message: (error as Error)?.message,
         },
       } as TrackEvent;
+      const event = decorateEventWithTraceV2(baseEvent, {
+        options: mergedOptions,
+        promptContent,
+      });
       const ingestResult = await sendWithRetry(event, mergedOptions);
       logIngestFailure(ingestResult);
       throw error;
@@ -959,6 +1161,151 @@ const extractModelFromArgs = (args: any[]): string | undefined => {
     return first.model;
   }
   return undefined;
+};
+
+const toStableJson = (value: unknown): string => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value ?? "");
+  }
+};
+
+const extractPromptFromArgs = (args: any[]): string | undefined => {
+  const first = args?.[0];
+  if (!first || typeof first !== "object") return undefined;
+  const candidate =
+    (first as Record<string, unknown>).messages ??
+    (first as Record<string, unknown>).input ??
+    (first as Record<string, unknown>).contents ??
+    (first as Record<string, unknown>).prompt;
+  if (candidate === undefined) return undefined;
+  return toStableJson(candidate);
+};
+
+const extractResponseContent = (response: any): string | undefined => {
+  if (!response) return undefined;
+  if (typeof response.output_text === "string" && response.output_text.trim().length > 0) {
+    return response.output_text;
+  }
+  if (typeof response.text === "string" && response.text.trim().length > 0) {
+    return response.text;
+  }
+
+  const choices = Array.isArray(response.choices) ? response.choices : [];
+  const parts: string[] = [];
+  for (const choice of choices) {
+    const content = choice?.message?.content;
+    if (typeof content === "string" && content.trim().length > 0) {
+      parts.push(content);
+    }
+  }
+  if (parts.length > 0) return parts.join("\n");
+
+  const output = Array.isArray(response.output) ? response.output : [];
+  for (const item of output) {
+    if (typeof item?.content === "string" && item.content.trim().length > 0) {
+      return item.content;
+    }
+  }
+  return undefined;
+};
+
+const buildTraceV2Decision = (
+  options: TrackOptions,
+  _fallbackEvaluation: TrackEvaluation | undefined
+): TraceDecision | undefined => {
+  const explicit = normalizeTraceDecision(options.decision);
+  if (explicit) return explicit;
+
+  const routingReason = options.routing_reason ?? options.routingReason;
+  const route = options.route;
+  if (!routingReason && !route) return undefined;
+
+  const decision = normalizeTraceDecision({
+    routing_reason: routingReason,
+    route,
+  });
+  return decision;
+};
+
+const appendContentPayloadBlocks = (
+  blocks: TracePayloadBlock[],
+  promptContent: string | undefined,
+  responseContent: string | undefined
+): TracePayloadBlock[] => {
+  const next = [...blocks];
+  if (promptContent) {
+    next.push({
+      payload_type: "prompt_input",
+      content: promptContent,
+    });
+  }
+  if (responseContent) {
+    next.push({
+      payload_type: "model_output",
+      content: responseContent,
+    });
+  }
+  return next;
+};
+
+const decorateEventWithTraceV2 = (
+  baseEvent: TrackEvent,
+  {
+    options,
+    promptContent,
+    responseContent,
+  }: {
+    options: TrackOptions;
+    promptContent?: string;
+    responseContent?: string;
+  }
+): TrackEvent => {
+  const captureContent = Boolean(options.capture_content ?? options.captureContent);
+  const explicitSchema = toSchemaVersion(options.schema_version ?? options.schemaVersion);
+  const spanKind = toSpanKind(options.span_kind ?? options.spanKind);
+  const toolName = toTagValue(options.tool_name ?? options.toolName);
+  const payloadRefs = normalizePayloadRefs(options.payload_refs ?? options.payloadRefs);
+  const explicitPayloadBlocks = normalizeTracePayloadBlocks(
+    options.payload_blocks ?? options.payloadBlocks
+  );
+  const payloadBlocks = captureContent
+    ? appendContentPayloadBlocks(explicitPayloadBlocks, promptContent, responseContent)
+    : explicitPayloadBlocks;
+  const explicitMetrics = normalizeTraceMetrics(options.metrics);
+  const normalizedMetrics = explicitMetrics ?? {
+    prompt_tokens: baseEvent.usage.prompt_tokens,
+    completion_tokens: baseEvent.usage.completion_tokens,
+    total_tokens: baseEvent.usage.total_tokens,
+    latency_ms: baseEvent.latency_ms,
+  };
+  const decision = buildTraceV2Decision(options, baseEvent.evaluation);
+  const promptHash = hashContent(promptContent) ?? baseEvent.prompt_hash;
+  const responseHash = hashContent(responseContent) ?? baseEvent.response_hash;
+  const shouldUseV2 =
+    explicitSchema === TRACE_SCHEMA_VERSION_V2 ||
+    spanKind !== undefined ||
+    toolName !== undefined ||
+    payloadRefs.length > 0 ||
+    payloadBlocks.length > 0 ||
+    explicitMetrics !== undefined ||
+    decision !== undefined;
+  const schemaVersion = shouldUseV2 ? TRACE_SCHEMA_VERSION_V2 : TRACE_SCHEMA_VERSION_V1;
+
+  const event: TrackEvent = {
+    ...baseEvent,
+    schema_version: schemaVersion,
+    prompt_hash: promptHash,
+    response_hash: responseHash,
+  };
+  if (spanKind) event.span_kind = spanKind;
+  if (toolName) event.tool_name = toolName;
+  if (payloadRefs.length > 0) event.payload_refs = payloadRefs;
+  if (payloadBlocks.length > 0) event.payload_blocks = payloadBlocks;
+  if (schemaVersion === TRACE_SCHEMA_VERSION_V2) event.metrics = normalizedMetrics;
+  if (decision) event.decision = decision;
+  return event;
 };
 
 const buildEvent = (
@@ -978,7 +1325,7 @@ const buildEvent = (
   status,
   timestamp: new Date().toISOString(),
   latency_ms: latencyMs,
-  model: contract.modelFromResponse?.(response) ?? modelHint,
+  model: contract.modelFromResponse?.(response) ?? modelHint ?? "unknown",
   usage: contract.usageFromResponse(response),
   tags,
   evaluation,
@@ -1083,17 +1430,23 @@ const wrapCreate = (
   return async (...args: any[]) => {
     const start = Date.now();
     const modelHint = extractModelFromArgs(args);
+    const promptContent = extractPromptFromArgs(args);
     const tags = getTags(options);
     const evaluation = getEvaluation(options);
     try {
       const response = await originalCreate(...args);
       const latencyMs = Date.now() - start;
-      const event = buildEvent(contract, latencyMs, response, modelHint, tags, evaluation, "success");
+      const baseEvent = buildEvent(contract, latencyMs, response, modelHint, tags, evaluation, "success");
+      const event = decorateEventWithTraceV2(baseEvent, {
+        options,
+        promptContent,
+        responseContent: extractResponseContent(response),
+      });
       void sendWithRetry(event, options).then(logIngestFailure);
       return response;
     } catch (error) {
       const latencyMs = Date.now() - start;
-      const event = buildEvent(
+      const baseEvent = buildEvent(
         contract,
         latencyMs,
         undefined,
@@ -1103,6 +1456,10 @@ const wrapCreate = (
         "failure",
         error as Error
       );
+      const event = decorateEventWithTraceV2(baseEvent, {
+        options,
+        promptContent,
+      });
       void sendWithRetry(event, options).then(logIngestFailure);
       throw error;
     }

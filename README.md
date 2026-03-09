@@ -2,11 +2,12 @@
 
 Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency and token usage telemetry.
 
-## What's New in v0.2.2
+## What's New in v0.2.4
 
 - Added Trace Context v1 tags.
 - New optional tags: `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
 - Added Evaluation Signals v1 fields: `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score`.
+- Added optional Trace Context v2 fields (`schema_version=2026-04-01`) for span/tool metadata, payload refs/blocks, per-step metrics, and routing decisions.
 - Added Express middleware helpers for request-level trace context propagation.
 - Added LangChain callback integration helper.
 - Added Vercel AI SDK `generateText` wrapper helper.
@@ -134,6 +135,29 @@ const tracked = trackOpenAI(openai, {
   span_id: "span_root_1",
   parent_span_id: null,
   step_name: "draft_reply",
+});
+```
+
+## Trace Context v2 (Optional)
+
+Use schema `2026-04-01` when you want step-level trace diagnostics and optimization metadata.
+
+```ts
+const tracked = trackOpenAI(openai, {
+  api_key: process.env.TOKVERA_API_KEY!,
+  feature: "support_bot",
+  tenant_id: "acme",
+  schema_version: "2026-04-01",
+  span_kind: "tool",
+  tool_name: "search_docs",
+  routing_reason: "budget_route",
+  route: "openai:gpt-4o-mini",
+  metrics: {
+    cost_usd: 0.00012,
+  },
+  payload_refs: ["ref_abc123"],
+  payload_blocks: [{ payload_type: "context", content: "retrieved policy snippet" }],
+  capture_content: true, // adds prompt_input/model_output blocks
 });
 ```
 
@@ -270,12 +294,14 @@ const result = await trackedGenerateText({
 
 ## Event Schema
 
-Canonical specification: [`tokvera-api/docs/CANONICAL_EVENT_ENVELOPE_V1.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/CANONICAL_EVENT_ENVELOPE_V1.md)
+Canonical specification:
+- v1: [`tokvera-api/docs/CANONICAL_EVENT_ENVELOPE_V1.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/CANONICAL_EVENT_ENVELOPE_V1.md)
+- v2: [`tokvera-api/docs/event-envelope-v2.contract.json`](https://github.com/Tokvera/tokvera-api/blob/main/docs/event-envelope-v2.contract.json)
 
 Versioning and deprecation policy: [`tokvera-api/docs/SCHEMA_COMPATIBILITY_POLICY.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/SCHEMA_COMPATIBILITY_POLICY.md)
 
 Events include:
-- `schema_version`: `2026-02-16`
+- `schema_version`: `2026-02-16` (v1) or `2026-04-01` (v2)
 - `event_type`: `openai.request`, `anthropic.request`, or `gemini.request`
 - `provider`: `openai`, `anthropic`, or `gemini`
 - `endpoint`: `chat.completions.create`, `responses.create`, `messages.create`, `models.generate_content`
@@ -286,8 +312,9 @@ Events include:
 - `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
 - Evaluation signals (optional): `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score` (emitted in `tags` and top-level `evaluation`)
 - `error` on failure events
+- v2 optional fields: `span_kind`, `tool_name`, `payload_refs`, `payload_blocks`, `metrics`, `decision`
 
-The API uses strict v1 validation. Unknown top-level, usage, tag, evaluation, or error fields are rejected.
+The API uses strict schema validation. Unknown fields are rejected for both v1 and v2 contracts.
 
 `trace_id` and `span_id` are auto-generated per request if not provided.
 
@@ -297,4 +324,6 @@ The API uses strict v1 validation. Unknown top-level, usage, tag, evaluation, or
 npm run build
 npm test
 npm run test:schema-compat
+# Optional: also validate canonical v2 endpoint
+TOKVERA_CHECK_V2_CONTRACT=1 npm run test:canonical-contract
 ```

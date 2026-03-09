@@ -19,6 +19,8 @@ async function runJob(): Promise<void> {
     openai,
     getTrackOptionsFromBackgroundJobContext(jobContext, {
       api_key: process.env.TOKVERA_API_KEY,
+      schema_version: "2026-04-01",
+      span_kind: "orchestrator",
       step_name: "summarize_events",
     })
   );

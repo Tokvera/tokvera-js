@@ -10,6 +10,11 @@ const tracked = trackOpenAI(openai, {
   plan: "starter",
   environment: "local",
   template_id: "tmpl_001",
+  schema_version: "2026-04-01",
+  span_kind: "model",
+  routing_reason: "default",
+  route: "openai:gpt-4o-mini",
+  capture_content: true,
 });
 
 async function run() {
