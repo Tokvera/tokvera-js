@@ -105,6 +105,45 @@ export type ExpressMiddlewareOptions = {
   feedback_score?: ExpressValueResolver<number | string>;
 };
 
+export type NextLikeHeaders = {
+  get?: (name: string) => string | null | undefined;
+  [key: string]: unknown;
+};
+
+export type NextLikeRequest = {
+  headers?: NextLikeHeaders | Record<string, ExpressHeaderValue>;
+  method?: string;
+  url?: string;
+  nextUrl?: {
+    pathname?: string;
+  };
+  pathname?: string;
+  tokvera?: TrackOptions;
+  [key: string]: unknown;
+};
+
+export type NextRouteContextOptions = ExpressMiddlewareOptions;
+
+export type NestExecutionContextLike = {
+  switchToHttp?: () => {
+    getRequest?: () => ExpressLikeRequest | undefined;
+    getResponse?: () => ExpressLikeResponse | undefined;
+  };
+};
+
+export type BullMQJobLike = {
+  id?: string | number;
+  name?: string;
+  queueName?: string;
+  data?: Record<string, unknown>;
+  opts?: {
+    attempts?: number;
+    [key: string]: unknown;
+  };
+  attemptsMade?: number;
+  [key: string]: unknown;
+};
+
 export type LangChainSerialized = {
   id?: string[];
   kwargs?: Record<string, unknown>;

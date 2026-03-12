@@ -2,13 +2,16 @@
 
 Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency and token usage telemetry.
 
-## What's New in v0.2.4
+## What's New in v0.2.6
 
 - Added Trace Context v1 tags.
 - New optional tags: `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
 - Added Evaluation Signals v1 fields: `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score`.
 - Added optional Trace Context v2 fields (`schema_version=2026-04-01`) for span/tool metadata, payload refs/blocks, per-step metrics, and routing decisions.
 - Added Express middleware helpers for request-level trace context propagation.
+- Added Next.js route-context helpers.
+- Added NestJS middleware + execution-context helpers.
+- Added BullMQ worker context helpers.
 - Added LangChain callback integration helper.
 - Added Vercel AI SDK `generateText` wrapper helper.
 - Auto-generates `trace_id` and `span_id` when you do not provide them.
@@ -207,6 +210,69 @@ app.post("/reply", async (req, res, next) => {
 });
 ```
 
+## Next.js Route Handler Integration
+
+Use helper context for App Router route handlers and server actions.
+
+```ts
+import OpenAI from "openai";
+import {
+  createTokveraNextRouteContext,
+  getTrackOptionsFromNextRouteContext,
+  trackOpenAI,
+} from "@tokvera/sdk";
+
+export async function POST(request: Request) {
+  const context = createTokveraNextRouteContext(request as any, {
+    feature: "next_chat",
+    environment: "production",
+  });
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const tracked = trackOpenAI(
+    openai,
+    getTrackOptionsFromNextRouteContext(request as any, {
+      ...context,
+      api_key: process.env.TOKVERA_API_KEY,
+      step_name: "route_generate_reply",
+    })
+  );
+
+  const result = await tracked.responses.create({
+    model: "gpt-4o-mini",
+    input: "Hello",
+  });
+
+  return Response.json(result);
+}
+```
+
+## NestJS Integration
+
+Nest can reuse Express-compatible middleware and request context helpers.
+
+```ts
+import {
+  createTokveraNestMiddleware,
+  getTrackOptionsFromNestExecutionContext,
+  trackOpenAI,
+} from "@tokvera/sdk";
+
+// main.ts
+app.use(
+  createTokveraNestMiddleware({
+    feature: "nest_api",
+    environment: "production",
+  })
+);
+
+// inside interceptor/controller
+const options = getTrackOptionsFromNestExecutionContext(context, {
+  api_key: process.env.TOKVERA_API_KEY,
+  step_name: "controller_step",
+});
+```
+
 ## Background Job Integration
 
 Use helpers to keep `trace_id` and `run_id` stable across async worker steps while emitting child spans per step.
@@ -240,6 +306,32 @@ await tracked.chat.completions.create({
   model: "gpt-4o-mini",
   messages: [{ role: "user", content: "Summarize yesterday incidents." }],
 });
+```
+
+## BullMQ Worker Integration
+
+Use BullMQ-specific helpers to map job attempts into retry-aware trace context.
+
+```ts
+import OpenAI from "openai";
+import {
+  createTokveraBullMQJobContext,
+  getTrackOptionsFromBullMQJobContext,
+  trackOpenAI,
+} from "@tokvera/sdk";
+
+const context = createTokveraBullMQJobContext(job, {
+  tenant_id: "acme",
+  environment: "production",
+});
+
+const tracked = trackOpenAI(
+  new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
+  getTrackOptionsFromBullMQJobContext(context, {
+    api_key: process.env.TOKVERA_API_KEY,
+    step_name: "worker_model_call",
+  })
+);
 ```
 
 ## LangChain Callback Integration
@@ -291,6 +383,7 @@ const result = await trackedGenerateText({
 - `examples/quickstart.ts`: basic OpenAI instrumentation.
 - `examples/express-middleware.ts`: request-scoped trace context propagation with Express.
 - `examples/background-jobs.ts`: background worker/job trace propagation.
+- `tests/integrationAdapters.test.ts`: Next.js/NestJS/BullMQ adapter compatibility checks.
 
 ## Event Schema
 

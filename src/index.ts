@@ -25,6 +25,10 @@ import {
   type VercelAIResult,
   type VercelAITrackOptions,
   type VercelAIUsage,
+  type NextLikeRequest,
+  type NextRouteContextOptions,
+  type NestExecutionContextLike,
+  type BullMQJobLike,
 } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 2000;
@@ -306,6 +310,22 @@ const readHeaderValue = (request: ExpressLikeRequest, headerName: string): strin
   return undefined;
 };
 
+const readNextHeaderValue = (request: NextLikeRequest, headerName: string): string | undefined => {
+  const headers = request?.headers;
+  if (!headers) return undefined;
+  const getter = (headers as { get?: (name: string) => string | null | undefined }).get;
+  if (typeof getter === "function") {
+    return toTagValue(getter(headerName));
+  }
+  const lowerHeaderName = headerName.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== lowerHeaderName) continue;
+    if (Array.isArray(value)) return toTagValue(value[0]);
+    return toTagValue(value);
+  }
+  return undefined;
+};
+
 const resolveRequestValue = <T>(
   resolver: ExpressValueResolver<T> | undefined,
   request: ExpressLikeRequest
@@ -440,6 +460,103 @@ export const getTrackOptionsFromExpressRequest = (
   return merged;
 };
 
+export const createTokveraNextRouteContext = (
+  request: NextLikeRequest,
+  options: NextRouteContextOptions = {}
+): TrackOptions => {
+  const traceHeaderName = toTagValue(options.traceHeaderName) ?? "x-tokvera-trace-id";
+  const runHeaderName = toTagValue(options.runHeaderName) ?? "x-tokvera-run-id";
+  const conversationHeaderName =
+    toTagValue(options.conversationHeaderName) ?? "x-tokvera-conversation-id";
+
+  const method = toTagValue(request?.method);
+  const nextPath =
+    toTagValue(request?.nextUrl?.pathname) ??
+    toTagValue(request?.pathname) ??
+    (() => {
+      const rawUrl = toTagValue(request?.url);
+      if (!rawUrl) return undefined;
+      try {
+        return new URL(rawUrl).pathname;
+      } catch {
+        return rawUrl;
+      }
+    })();
+
+  const expressLikeRequest: ExpressLikeRequest = {
+    ...(request as Record<string, unknown>),
+    method,
+    path: nextPath,
+    headers: request?.headers as unknown as Record<string, string | string[] | undefined>,
+  };
+
+  const traceId = readNextHeaderValue(request, traceHeaderName) ?? generateTraceId();
+  const runId = resolveRequestTag(options.run_id, expressLikeRequest) ?? readNextHeaderValue(request, runHeaderName);
+  const conversationId =
+    resolveRequestTag(options.conversation_id, expressLikeRequest) ??
+    readNextHeaderValue(request, conversationHeaderName);
+  const feedbackScore = resolveRequestFeedbackScore(options.feedback_score, expressLikeRequest);
+
+  const requestContext = withDefinedTrackOptions({
+    feature: resolveRequestTag(options.feature, expressLikeRequest),
+    tenant_id: resolveRequestTag(options.tenant_id, expressLikeRequest),
+    customer_id: resolveRequestTag(options.customer_id, expressLikeRequest),
+    attempt_type: resolveRequestTag(options.attempt_type, expressLikeRequest),
+    plan: resolveRequestTag(options.plan, expressLikeRequest),
+    environment: resolveRequestTag(options.environment, expressLikeRequest),
+    template_id: resolveRequestTag(options.template_id, expressLikeRequest),
+    trace_id: traceId,
+    run_id: runId,
+    conversation_id: conversationId,
+    span_id: generateSpanId(),
+    parent_span_id: resolveRequestTag(options.parent_span_id, expressLikeRequest),
+    step_name: resolveRequestTag(options.step_name, expressLikeRequest) ?? deriveRequestStepName(expressLikeRequest),
+    outcome: resolveRequestTag(options.outcome, expressLikeRequest),
+    retry_reason: resolveRequestTag(options.retry_reason, expressLikeRequest),
+    fallback_reason: resolveRequestTag(options.fallback_reason, expressLikeRequest),
+    quality_label: resolveRequestTag(options.quality_label, expressLikeRequest),
+    feedback_score: feedbackScore,
+  });
+
+  request.tokvera = requestContext;
+  return requestContext;
+};
+
+export const getTrackOptionsFromNextRouteContext = (
+  request: NextLikeRequest,
+  overrides: TrackOptions = {}
+): TrackOptions => {
+  const expressLikeRequest: ExpressLikeRequest = {
+    ...request,
+    headers: request?.headers as Record<string, string | string[] | undefined>,
+  };
+  return getTrackOptionsFromExpressRequest(expressLikeRequest, overrides);
+};
+
+export const createTokveraNestMiddleware = (
+  options: ExpressMiddlewareOptions = {}
+) => createTokveraExpressMiddleware(options);
+
+export const getTrackOptionsFromNestRequest = (
+  request: ExpressLikeRequest,
+  overrides: TrackOptions = {}
+): TrackOptions => getTrackOptionsFromExpressRequest(request, overrides);
+
+export const getTrackOptionsFromNestExecutionContext = (
+  context: NestExecutionContextLike,
+  overrides: TrackOptions = {}
+): TrackOptions => {
+  const request = context?.switchToHttp?.()?.getRequest?.();
+  if (!request) {
+    return withDefinedTrackOptions({
+      ...overrides,
+      trace_id: toTagValue(overrides.trace_id) ?? generateTraceId(),
+      span_id: toTagValue(overrides.span_id) ?? generateSpanId(),
+    });
+  }
+  return getTrackOptionsFromExpressRequest(request, overrides);
+};
+
 export const createTokveraBackgroundJobContext = (
   options: BackgroundJobContextOptions = {}
 ): BackgroundJobContext => {
@@ -503,6 +620,39 @@ export const getTrackOptionsFromBackgroundJobContext = (
     parent_span_id: parentSpanId,
   });
 };
+
+export const createTokveraBullMQJobContext = (
+  job: BullMQJobLike,
+  options: BackgroundJobContextOptions = {}
+): BackgroundJobContext => {
+  const jobId = toTagValue(job?.id) ?? toTagValue(options.job_id);
+  const attemptsMade = toOptionalFiniteNumber(job?.attemptsMade);
+  const configuredAttempts = toOptionalFiniteNumber(job?.opts?.attempts);
+  const queueName = toTagValue(job?.queueName);
+  const jobName = toTagValue(job?.name);
+
+  const context = createTokveraBackgroundJobContext({
+    ...options,
+    job_id: jobId,
+    feature:
+      toTagValue(options.feature) ??
+      jobName ??
+      queueName,
+    attempt_type:
+      toTagValue(options.attempt_type) ??
+      (attemptsMade !== undefined && attemptsMade > 0 ? "retry" : "initial"),
+    template_id:
+      toTagValue(options.template_id) ??
+      (configuredAttempts !== undefined ? `attempts_${Math.trunc(configuredAttempts)}` : undefined),
+  });
+
+  return context;
+};
+
+export const getTrackOptionsFromBullMQJobContext = (
+  context: BackgroundJobContext,
+  overrides: TrackOptions = {}
+): TrackOptions => getTrackOptionsFromBackgroundJobContext(context, overrides);
 
 type ProviderContract = {
   provider: TrackEvent["provider"];
@@ -1576,9 +1726,13 @@ export type {
   AnthropicTrackEvent,
   BackgroundJobContext,
   BackgroundJobContextOptions,
+  BullMQJobLike,
   ExpressLikeNext,
   ExpressLikeRequest,
   ExpressLikeResponse,
+  NestExecutionContextLike,
+  NextLikeRequest,
+  NextRouteContextOptions,
   LangChainCallbackOptions,
   LangChainLLMResult,
   LangChainSerialized,

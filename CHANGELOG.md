@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.6] - 2026-03-12
+
+### Added
+- Next.js adapter helpers:
+  - `createTokveraNextRouteContext(...)`
+  - `getTrackOptionsFromNextRouteContext(...)`
+- NestJS adapter helpers:
+  - `createTokveraNestMiddleware(...)`
+  - `getTrackOptionsFromNestRequest(...)`
+  - `getTrackOptionsFromNestExecutionContext(...)`
+- BullMQ adapter helpers:
+  - `createTokveraBullMQJobContext(...)`
+  - `getTrackOptionsFromBullMQJobContext(...)`
+- Adapter compatibility tests for Next.js, NestJS, and BullMQ.
+
 ## [0.2.4] - 2026-03-08
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "@tokvera/sdk",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Tokvera TypeScript SDK for OpenAI, Anthropic, and Gemini call tracking.",
   "license": "MIT",
   "type": "module",
