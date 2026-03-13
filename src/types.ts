@@ -205,6 +205,8 @@ export type TrackOptions = TrackTags &
   apiKey?: string;
   ingest_url?: string;
   ingestUrl?: string;
+  emit_lifecycle_events?: boolean;
+  emitLifecycleEvents?: boolean;
   schema_version?: "2026-02-16" | "2026-04-01";
   schemaVersion?: "2026-02-16" | "2026-04-01";
   capture_content?: boolean;
@@ -251,7 +253,7 @@ export type TrackError = {
 
 type BaseTrackEvent = {
   schema_version: "2026-02-16" | "2026-04-01";
-  status: "success" | "failure";
+  status: "in_progress" | "success" | "failure";
   timestamp: string;
   latency_ms: number;
   model?: string;

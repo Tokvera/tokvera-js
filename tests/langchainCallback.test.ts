@@ -106,4 +106,48 @@ describe("LangChain callback integration", () => {
     expect(event.usage.total_tokens).toBe(0);
     expect(event.tags.outcome).toBe("failure");
   });
+
+  it("emits in_progress before success when lifecycle events are enabled", async () => {
+    const callback = createTokveraLangChainCallback({
+      api_key: "project_key_123",
+      feature: "agent_support",
+      tenant_id: "acme",
+      emitLifecycleEvents: true,
+    });
+
+    await callback.handleLLMStart(
+      { kwargs: { model: "gpt-4o-mini" } },
+      ["hello lifecycle"],
+      "run_lifecycle_1",
+      undefined,
+      { invocation_params: { model: "gpt-4o-mini" } },
+      [],
+      { conversation_id: "conv_live", step_name: "draft_reply" },
+      "ReplyRun"
+    );
+    await callback.handleLLMEnd(
+      {
+        llmOutput: {
+          tokenUsage: {
+            promptTokens: 10,
+            completionTokens: 4,
+            totalTokens: 14,
+          },
+        },
+      },
+      "run_lifecycle_1"
+    );
+    await flushPromises();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    const startEvent = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
+    const terminalEvent = JSON.parse((globalThis.fetch as any).mock.calls[1][1].body);
+
+    expect(startEvent.status).toBe("in_progress");
+    expect(startEvent.tags.run_id).toBe("run_lifecycle_1");
+    expect(startEvent.tags.trace_id).toMatch(/^trc_/);
+    expect(terminalEvent.status).toBe("success");
+    expect(terminalEvent.tags.run_id).toBe("run_lifecycle_1");
+    expect(terminalEvent.usage.total_tokens).toBe(14);
+  });
 });

@@ -261,7 +261,7 @@ const getTags = (options: TrackOptions): TrackTags => {
     environment: toTagValue(options.environment),
     template_id: toTagValue(options.template_id),
     trace_id: toTagValue(options.trace_id) ?? generateTraceId(),
-    run_id: toTagValue(options.run_id),
+    run_id: toTagValue(options.run_id) ?? generateRunId(),
     conversation_id: toTagValue(options.conversation_id),
     span_id: toTagValue(options.span_id) ?? generateSpanId(),
     parent_span_id: toTagValue(options.parent_span_id),
@@ -295,6 +295,18 @@ const getEvaluation = (options: TrackOptions): TrackEvaluation | undefined => {
 
   return evaluation;
 };
+
+const shouldEmitLifecycleEvents = (options: TrackOptions): boolean =>
+  Boolean(options.emit_lifecycle_events ?? options.emitLifecycleEvents);
+
+const stripTerminalTraceFields = (tags: TrackTags): TrackTags => ({
+  ...tags,
+  outcome: undefined,
+  retry_reason: undefined,
+  fallback_reason: undefined,
+  quality_label: undefined,
+  feedback_score: undefined,
+});
 
 const readHeaderValue = (request: ExpressLikeRequest, headerName: string): string | undefined => {
   if (!request || !request.headers) return undefined;
@@ -958,6 +970,32 @@ export class TokveraLangChainCallbackHandler {
       parentSnapshot
     );
     this.runs.set(runKey, snapshot);
+    if (shouldEmitLifecycleEvents(this.options)) {
+      const event = decorateEventWithTraceV2(
+        {
+          schema_version: TRACE_SCHEMA_VERSION_V1,
+          event_type: snapshot.contract.event_type,
+          provider: snapshot.contract.provider,
+          endpoint: snapshot.contract.endpoint,
+          status: "in_progress",
+          timestamp: new Date().toISOString(),
+          latency_ms: 0,
+          model: snapshot.model,
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+          },
+          tags: stripTerminalTraceFields(snapshot.tags),
+        } as TrackEvent,
+        {
+          options: this.options,
+          promptContent: snapshot.promptContent,
+        }
+      );
+      const ingestResult = await sendWithRetry(event, this.options);
+      logIngestFailure(ingestResult);
+    }
   }
 
   async handleLLMEnd(
@@ -1583,6 +1621,24 @@ const wrapCreate = (
     const promptContent = extractPromptFromArgs(args);
     const tags = getTags(options);
     const evaluation = getEvaluation(options);
+    if (shouldEmitLifecycleEvents(options)) {
+      const lifecycleEvent = decorateEventWithTraceV2(
+        buildEvent(
+          contract,
+          0,
+          undefined,
+          modelHint,
+          stripTerminalTraceFields(tags),
+          undefined,
+          "in_progress"
+        ),
+        {
+          options,
+          promptContent,
+        }
+      );
+      void sendWithRetry(lifecycleEvent, options).then(logIngestFailure);
+    }
     try {
       const response = await originalCreate(...args);
       const latencyMs = Date.now() - start;

@@ -127,6 +127,52 @@ describe("trackOpenAI", () => {
     expect(typeof event.tags.span_id).toBe("string");
   });
 
+  it("emits in_progress before success when lifecycle events are enabled", async () => {
+    const response = {
+      id: "chat_lifecycle_1",
+      model: "gpt-4o-mini",
+      usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 },
+    };
+    const openaiClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(response),
+        },
+      },
+      responses: {
+        create: vi.fn(),
+      },
+    };
+
+    const tracked = trackOpenAI(openaiClient, {
+      feature: "lifecycle_test",
+      emitLifecycleEvents: true,
+      capture_content: true,
+    });
+
+    await tracked.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "hello from lifecycle" }],
+    });
+    await flushPromises();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    const startEvent = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body);
+    const terminalEvent = JSON.parse((globalThis.fetch as any).mock.calls[1][1].body);
+
+    expect(startEvent.status).toBe("in_progress");
+    expect(startEvent.tags.outcome).toBeUndefined();
+    expect(startEvent.tags.retry_reason).toBeUndefined();
+    expect(startEvent.tags.run_id).toMatch(/^run_/);
+    expect(startEvent.tags.trace_id).toMatch(/^trc_/);
+    expect(startEvent.payload_blocks?.length ?? 0).toBeGreaterThan(0);
+
+    expect(terminalEvent.status).toBe("success");
+    expect(terminalEvent.tags.run_id).toBe(startEvent.tags.run_id);
+    expect(terminalEvent.tags.trace_id).toBe(startEvent.tags.trace_id);
+    expect(terminalEvent.usage.total_tokens).toBe(7);
+  });
+
   it("emits failure event and rethrows when OpenAI call fails", async () => {
     const openaiClient = {
       chat: {

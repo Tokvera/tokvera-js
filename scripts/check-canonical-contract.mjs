@@ -40,7 +40,7 @@ const REQUIRED_TOP_LEVEL_FIELDS = [
   "tags",
 ];
 
-const STATUS_VALUES = ["success", "failure"];
+const STATUS_VALUES = ["in_progress", "success", "failure"];
 const PROVIDER_CONTRACTS = {
   openai: {
     event_type: "openai.request",
