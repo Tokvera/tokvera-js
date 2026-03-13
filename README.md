@@ -1,20 +1,20 @@
 # @tokvera/sdk
 
-Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency and token usage telemetry.
+JavaScript SDK for Tokvera AI cost and trace telemetry.
 
-## What's New in v0.2.6
+Current version: `0.2.6`
 
-- Added Trace Context v1 tags.
-- New optional tags: `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`.
-- Added Evaluation Signals v1 fields: `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score`.
-- Added optional Trace Context v2 fields (`schema_version=2026-04-01`) for span/tool metadata, payload refs/blocks, per-step metrics, and routing decisions.
-- Added Express middleware helpers for request-level trace context propagation.
-- Added Next.js route-context helpers.
-- Added NestJS middleware + execution-context helpers.
-- Added BullMQ worker context helpers.
-- Added LangChain callback integration helper.
-- Added Vercel AI SDK `generateText` wrapper helper.
-- Auto-generates `trace_id` and `span_id` when you do not provide them.
+## What It Tracks
+
+- OpenAI (`chat.completions.create`, `responses.create`)
+- Anthropic (`messages.create`)
+- Gemini (`models.generateContent` / `generate_content`)
+
+Each tracked call emits normalized telemetry to Tokvera ingest (`/v1/events`) with:
+- latency, status, model, token usage
+- trace context (`trace_id`, `run_id`, `span_id`, `parent_span_id`, `conversation_id`)
+- evaluation signals (`outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score`)
+- optional v2 trace fields (span/tool metadata, payload refs/blocks, per-step metrics, routing decisions)
 
 ## Install
 
@@ -22,401 +22,85 @@ Tokvera TypeScript SDK to track OpenAI, Anthropic, and Gemini calls with latency
 npm install @tokvera/sdk
 ```
 
-## Usage
-
-### OpenAI
+## Quick Start
 
 ```ts
 import OpenAI from "openai";
 import { trackOpenAI } from "@tokvera/sdk";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 const tracked = trackOpenAI(openai, {
-  api_key: "tokvera_project_key",
-  feature: "onboarding",
-  tenant_id: "tenant_123",
-  customer_id: "cust_456",
-  trace_id: "trace_checkout_784",
-  run_id: "run_checkout_784",
-  conversation_id: "conv_101",
-  step_name: "draft_reply",
-  outcome: "success",
-  quality_label: "good",
-  feedback_score: 5,
-  plan: "pro",
-  environment: "production",
-  template_id: "tmpl_789",
-});
-
-// Chat Completions
-const chat = await tracked.chat.completions.create({
-  model: "gpt-4o-mini",
-  messages: [{ role: "user", content: "Hello" }],
-});
-
-// Responses API
-const response = await tracked.responses.create({
-  model: "gpt-4o-mini",
-  input: "Write a haiku about wind.",
-});
-```
-
-### Anthropic
-
-```ts
-import Anthropic from "@anthropic-ai/sdk";
-import { trackAnthropic } from "@tokvera/sdk";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const tracked = trackAnthropic(anthropic, {
-  api_key: "tokvera_project_key",
-  feature: "support_bot",
-  tenant_id: "tenant_123",
-});
-
-await tracked.messages.create({
-  model: "claude-3-5-sonnet-latest",
-  max_tokens: 256,
-  messages: [{ role: "user", content: "Hello" }],
-});
-```
-
-### Gemini
-
-```ts
-import { GoogleGenAI } from "@google/genai";
-import { trackGemini } from "@tokvera/sdk";
-
-const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const tracked = trackGemini(gemini, {
-  api_key: "tokvera_project_key",
-  feature: "assistant",
-  tenant_id: "tenant_123",
-});
-
-await tracked.models.generateContent({
-  model: "gemini-2.0-flash",
-  contents: "Hello",
-});
-```
-
-## Configuration
-
-Set ingestion endpoint and API key:
-
-```bash
-export TOKVERA_INGEST_URL="https://api.tokvera.org/v1/events"
-export TOKVERA_API_KEY="tokvera_project_key"
-```
-
-Per-client config in `trackOpenAI(...)`, `trackAnthropic(...)`, or `trackGemini(...)` overrides env vars.
-
-If ingestion fails, the SDK will not throw and will not block OpenAI responses.
-
-## Trace Context v1
-
-Use trace tags to reconstruct request chains without sending prompt payloads.
-
-Recommended semantics:
-- `trace_id`: one end-to-end workflow/request.
-- `run_id`: one execution run of an agent/workflow.
-- `conversation_id`: one user conversation/session.
-- `span_id`: one model call.
-- `parent_span_id`: parent model call when nested.
-- `step_name`: readable stage label (`retrieve_context`, `draft_reply`, `quality_retry`).
-
-Example:
-
-```ts
-const tracked = trackOpenAI(openai, {
-  api_key: process.env.TOKVERA_API_KEY!,
-  feature: "support_bot",
-  tenant_id: "acme",
-  trace_id: "trace_req_20260304_001",
-  run_id: "run_agent_20260304_001",
-  conversation_id: "conv_9832",
-  span_id: "span_root_1",
-  parent_span_id: null,
-  step_name: "draft_reply",
-});
-```
-
-## Trace Context v2 (Optional)
-
-Use schema `2026-04-01` when you want step-level trace diagnostics and optimization metadata.
-
-```ts
-const tracked = trackOpenAI(openai, {
-  api_key: process.env.TOKVERA_API_KEY!,
-  feature: "support_bot",
-  tenant_id: "acme",
-  schema_version: "2026-04-01",
-  span_kind: "tool",
-  tool_name: "search_docs",
-  routing_reason: "budget_route",
-  route: "openai:gpt-4o-mini",
-  metrics: {
-    cost_usd: 0.00012,
-  },
-  payload_refs: ["ref_abc123"],
-  payload_blocks: [{ payload_type: "context", content: "retrieved policy snippet" }],
-  capture_content: true, // adds prompt_input/model_output blocks
-});
-```
-
-## Express Middleware Integration
-
-Use middleware to create request-level trace context and pass it into SDK calls.
-
-```ts
-import express from "express";
-import OpenAI from "openai";
-import {
-  createTokveraExpressMiddleware,
-  getTrackOptionsFromExpressRequest,
-  trackOpenAI,
-} from "@tokvera/sdk";
-
-const app = express();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-app.use(
-  createTokveraExpressMiddleware({
-    feature: "support_bot",
-    tenant_id: (req) => req.user?.tenantId,
-    environment: "production",
-  })
-);
-
-app.post("/reply", async (req, res, next) => {
-  try {
-    const tracked = trackOpenAI(
-      openai,
-      getTrackOptionsFromExpressRequest(req, {
-        api_key: process.env.TOKVERA_API_KEY,
-        step_name: "draft_reply",
-      })
-    );
-
-    const result = await tracked.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: "Hello" }],
-    });
-
-    res.json(result);
-  } catch (error) {
-    next(error);
-  }
-});
-```
-
-## Next.js Route Handler Integration
-
-Use helper context for App Router route handlers and server actions.
-
-```ts
-import OpenAI from "openai";
-import {
-  createTokveraNextRouteContext,
-  getTrackOptionsFromNextRouteContext,
-  trackOpenAI,
-} from "@tokvera/sdk";
-
-export async function POST(request: Request) {
-  const context = createTokveraNextRouteContext(request as any, {
-    feature: "next_chat",
-    environment: "production",
-  });
-
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const tracked = trackOpenAI(
-    openai,
-    getTrackOptionsFromNextRouteContext(request as any, {
-      ...context,
-      api_key: process.env.TOKVERA_API_KEY,
-      step_name: "route_generate_reply",
-    })
-  );
-
-  const result = await tracked.responses.create({
-    model: "gpt-4o-mini",
-    input: "Hello",
-  });
-
-  return Response.json(result);
-}
-```
-
-## NestJS Integration
-
-Nest can reuse Express-compatible middleware and request context helpers.
-
-```ts
-import {
-  createTokveraNestMiddleware,
-  getTrackOptionsFromNestExecutionContext,
-  trackOpenAI,
-} from "@tokvera/sdk";
-
-// main.ts
-app.use(
-  createTokveraNestMiddleware({
-    feature: "nest_api",
-    environment: "production",
-  })
-);
-
-// inside interceptor/controller
-const options = getTrackOptionsFromNestExecutionContext(context, {
   api_key: process.env.TOKVERA_API_KEY,
-  step_name: "controller_step",
-});
-```
-
-## Background Job Integration
-
-Use helpers to keep `trace_id` and `run_id` stable across async worker steps while emitting child spans per step.
-
-```ts
-import OpenAI from "openai";
-import {
-  createTokveraBackgroundJobContext,
-  getTrackOptionsFromBackgroundJobContext,
-  trackOpenAI,
-} from "@tokvera/sdk";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-const jobContext = createTokveraBackgroundJobContext({
-  job_id: "job_20260308_001",
-  feature: "daily_summary",
+  feature: "support_bot",
   tenant_id: "acme",
   environment: "production",
+  step_name: "draft_reply",
 });
-
-const tracked = trackOpenAI(
-  openai,
-  getTrackOptionsFromBackgroundJobContext(jobContext, {
-    api_key: process.env.TOKVERA_API_KEY,
-    step_name: "generate_summary",
-  })
-);
 
 await tracked.chat.completions.create({
   model: "gpt-4o-mini",
-  messages: [{ role: "user", content: "Summarize yesterday incidents." }],
-});
-```
-
-## BullMQ Worker Integration
-
-Use BullMQ-specific helpers to map job attempts into retry-aware trace context.
-
-```ts
-import OpenAI from "openai";
-import {
-  createTokveraBullMQJobContext,
-  getTrackOptionsFromBullMQJobContext,
-  trackOpenAI,
-} from "@tokvera/sdk";
-
-const context = createTokveraBullMQJobContext(job, {
-  tenant_id: "acme",
-  environment: "production",
-});
-
-const tracked = trackOpenAI(
-  new OpenAI({ apiKey: process.env.OPENAI_API_KEY }),
-  getTrackOptionsFromBullMQJobContext(context, {
-    api_key: process.env.TOKVERA_API_KEY,
-    step_name: "worker_model_call",
-  })
-);
-```
-
-## LangChain Callback Integration
-
-Use a callback handler to emit Tokvera events for LangChain LLM runs.
-
-```ts
-import { createTokveraLangChainCallback } from "@tokvera/sdk";
-import { ChatOpenAI } from "@langchain/openai";
-
-const callback = createTokveraLangChainCallback({
-  api_key: process.env.TOKVERA_API_KEY,
-  feature: "agent_support",
-  tenant_id: "acme",
-  environment: "production",
-});
-
-const model = new ChatOpenAI({
-  model: "gpt-4o-mini",
-  callbacks: [callback],
-});
-
-await model.invoke("Hello");
-```
-
-## Vercel AI SDK Helper
-
-Wrap `generateText` to emit Tokvera telemetry with trace/evaluation tags.
-
-```ts
-import { generateText } from "ai";
-import { wrapVercelAIGenerateText } from "@tokvera/sdk";
-
-const trackedGenerateText = wrapVercelAIGenerateText(generateText, {
-  api_key: process.env.TOKVERA_API_KEY,
-  feature: "assistant_reply",
-  tenant_id: "acme",
-  environment: "production",
-});
-
-const result = await trackedGenerateText({
-  model: "gpt-4o-mini",
   messages: [{ role: "user", content: "Hello" }],
 });
 ```
 
+Set ingest URL (optional if using default):
+
+```bash
+export TOKVERA_INGEST_URL="https://api.tokvera.org/v1/events"
+```
+
+## Integration Helpers
+
+Framework/runtime helpers shipped in this SDK:
+
+- Express:
+  - `createTokveraExpressMiddleware(...)`
+  - `getTrackOptionsFromExpressRequest(...)`
+- Next.js route handlers/server actions:
+  - `createTokveraNextRouteContext(...)`
+  - `getTrackOptionsFromNextRouteContext(...)`
+- NestJS:
+  - `createTokveraNestMiddleware(...)`
+  - `getTrackOptionsFromNestExecutionContext(...)`
+- Background jobs:
+  - `createTokveraBackgroundJobContext(...)`
+  - `getTrackOptionsFromBackgroundJobContext(...)`
+- BullMQ:
+  - `createTokveraBullMQJobContext(...)`
+  - `getTrackOptionsFromBullMQJobContext(...)`
+- LangChain:
+  - `createTokveraLangChainCallback(...)`
+- Vercel AI SDK:
+  - `wrapVercelAIGenerateText(...)`
+
+## Trace Schema Support
+
+- v1 schema version: `2026-02-16`
+- v2 schema version: `2026-04-01`
+
+Contract references:
+- `tokvera-api/docs/event-envelope-v1.contract.json`
+- `tokvera-api/docs/event-envelope-v2.contract.json`
+- `tokvera-api/docs/SCHEMA_COMPATIBILITY_POLICY.md`
+
+## Privacy Behavior
+
+- Tracking is fire-and-forget and non-blocking
+- Prompt/output content is not required
+- If you enable content capture in v2 mode, hashes/blocks are attached based on options
+
 ## Examples
 
-- `examples/quickstart.ts`: basic OpenAI instrumentation.
-- `examples/express-middleware.ts`: request-scoped trace context propagation with Express.
-- `examples/background-jobs.ts`: background worker/job trace propagation.
-- `tests/integrationAdapters.test.ts`: Next.js/NestJS/BullMQ adapter compatibility checks.
+- `examples/quickstart.ts`
+- `examples/express-middleware.ts`
+- `examples/background-jobs.ts`
 
-## Event Schema
-
-Canonical specification:
-- v1: [`tokvera-api/docs/CANONICAL_EVENT_ENVELOPE_V1.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/CANONICAL_EVENT_ENVELOPE_V1.md)
-- v2: [`tokvera-api/docs/event-envelope-v2.contract.json`](https://github.com/Tokvera/tokvera-api/blob/main/docs/event-envelope-v2.contract.json)
-
-Versioning and deprecation policy: [`tokvera-api/docs/SCHEMA_COMPATIBILITY_POLICY.md`](https://github.com/Tokvera/tokvera-api/blob/main/docs/SCHEMA_COMPATIBILITY_POLICY.md)
-
-Events include:
-- `schema_version`: `2026-02-16` (v1) or `2026-04-01` (v2)
-- `event_type`: `openai.request`, `anthropic.request`, or `gemini.request`
-- `provider`: `openai`, `anthropic`, or `gemini`
-- `endpoint`: `chat.completions.create`, `responses.create`, `messages.create`, `models.generate_content`
-- `status`: `success` or `failure`
-- `latency_ms`
-- `model`
-- `usage`: `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `tags`: any of `feature`, `tenant_id`, `customer_id`, `attempt_type`, `plan`, `environment`, `template_id`, `trace_id`, `run_id`, `conversation_id`, `span_id`, `parent_span_id`, `step_name`
-- Evaluation signals (optional): `outcome`, `retry_reason`, `fallback_reason`, `quality_label`, `feedback_score` (emitted in `tags` and top-level `evaluation`)
-- `error` on failure events
-- v2 optional fields: `span_kind`, `tool_name`, `payload_refs`, `payload_blocks`, `metrics`, `decision`
-
-The API uses strict schema validation. Unknown fields are rejected for both v1 and v2 contracts.
-
-`trace_id` and `span_id` are auto-generated per request if not provided.
-
-## Build & Test
+## Test
 
 ```bash
 npm run build
 npm test
 npm run test:schema-compat
-# Optional: also validate canonical v2 endpoint
-TOKVERA_CHECK_V2_CONTRACT=1 npm run test:canonical-contract
+npm run test:canonical-contract
 ```
