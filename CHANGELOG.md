@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.7] - 2026-03-14
+
+### Added
+- Optional lifecycle start events via `emitLifecycleEvents` / `emit_lifecycle_events` so Tokvera can show in-progress runs in `/dashboard/traces/live`.
+- LangChain callback lifecycle emission for live tracing workflows.
+
+### Changed
+- Canonical contract checks now accept `in_progress` as a valid lifecycle status.
+- Quickstart and example code now demonstrate realtime trace lifecycle emission.
+
 ## [0.2.6] - 2026-03-12
 
 ### Added

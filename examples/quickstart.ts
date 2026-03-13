@@ -15,6 +15,7 @@ const tracked = trackOpenAI(openai, {
   routing_reason: "default",
   route: "openai:gpt-4o-mini",
   capture_content: true,
+  emitLifecycleEvents: true,
 });
 
 async function run() {

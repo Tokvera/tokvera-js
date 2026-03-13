@@ -2,7 +2,7 @@
 
 JavaScript SDK for Tokvera AI cost and trace telemetry.
 
-Current version: `0.2.6`
+Current version: `0.2.7`
 
 ## What It Tracks
 
@@ -36,6 +36,7 @@ const tracked = trackOpenAI(openai, {
   tenant_id: "acme",
   environment: "production",
   step_name: "draft_reply",
+  emitLifecycleEvents: true,
 });
 
 await tracked.chat.completions.create({
@@ -43,6 +44,8 @@ await tracked.chat.completions.create({
   messages: [{ role: "user", content: "Hello" }],
 });
 ```
+
+Enable `emitLifecycleEvents: true` when you want `/dashboard/traces/live` to show a run immediately at call start and keep it marked as processing until the terminal event lands.
 
 Set ingest URL (optional if using default):
 
@@ -95,6 +98,12 @@ Contract references:
 - `examples/quickstart.ts`
 - `examples/express-middleware.ts`
 - `examples/background-jobs.ts`
+
+## Realtime Tracing
+
+- `/dashboard/traces` is the main engineering workspace for execution, payload, and optimization debugging.
+- `/dashboard/traces/live` is the realtime feed for active and recently completed runs.
+- Lifecycle start events are additive. They do not replace the normal terminal success/failure event.
 
 ## Test
 

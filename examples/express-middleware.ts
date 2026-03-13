@@ -50,6 +50,7 @@ app.post("/reply", async (req: RequestWithUser, res, next) => {
         step_name: "draft_reply",
         quality_label: "good",
         outcome: "success",
+        emitLifecycleEvents: true,
       })
     );
 

@@ -22,6 +22,7 @@ async function runJob(): Promise<void> {
       schema_version: "2026-04-01",
       span_kind: "orchestrator",
       step_name: "summarize_events",
+      emitLifecycleEvents: true,
     })
   );
 
