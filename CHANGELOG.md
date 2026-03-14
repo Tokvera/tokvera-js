@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8] - 2026-03-14
+
+### Added
+- Manual tracing substrate for existing apps:
+  - `createTokveraTracer(...)`
+  - `startTrace(...)`
+  - `startSpan(...)`
+  - `finishSpan(...)`
+  - `failSpan(...)`
+  - `attachPayload(...)`
+  - `getTrackOptionsFromTraceContext(...)`
+- Mistral wrapper via `trackMistral(...)`.
+- OpenTelemetry bridge via `TokveraOTelSpanExporter`.
+- Thin runtime helpers:
+  - `createTokveraOpenAIAgentsTracingProcessor(...)`
+  - `createTokveraLangGraphHooks(...)`
+- New examples for manual tracing and OpenAI Agents runtime wiring.
+
+### Changed
+- SDK package metadata now reflects provider tracking, manual tracing, and runtime integrations.
+- Canonical contract expectations now include `mistral.request` and `tokvera.trace`.
+
 ## [0.2.7] - 2026-03-14
 
 ### Added

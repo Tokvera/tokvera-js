@@ -2,13 +2,14 @@
 
 JavaScript SDK for Tokvera AI cost and trace telemetry.
 
-Current version: `0.2.7`
+Current version: `0.2.8`
 
 ## What It Tracks
 
 - OpenAI (`chat.completions.create`, `responses.create`)
 - Anthropic (`messages.create`)
 - Gemini (`models.generateContent` / `generate_content`)
+- Mistral (`chat.complete`)
 
 Each tracked call emits normalized telemetry to Tokvera ingest (`/v1/events`) with:
 - latency, status, model, token usage
@@ -57,6 +58,21 @@ export TOKVERA_INGEST_URL="https://api.tokvera.org/v1/events"
 
 Framework/runtime helpers shipped in this SDK:
 
+- Existing app / manual tracing:
+  - `createTokveraTracer(...)`
+  - `startTrace(...)`
+  - `startSpan(...)`
+  - `finishSpan(...)`
+  - `failSpan(...)`
+  - `attachPayload(...)`
+  - `getTrackOptionsFromTraceContext(...)`
+- OpenAI Agents SDK:
+  - `createTokveraOpenAIAgentsTracingProcessor(...)`
+- LangGraph:
+  - `createTokveraLangGraphHooks(...)`
+- OpenTelemetry bridge:
+  - `TokveraOTelSpanExporter`
+
 - Express:
   - `createTokveraExpressMiddleware(...)`
   - `getTrackOptionsFromExpressRequest(...)`
@@ -96,6 +112,8 @@ Contract references:
 ## Examples
 
 - `examples/quickstart.ts`
+- `examples/manual-tracer.ts`
+- `examples/openai-agents.ts`
 - `examples/express-middleware.ts`
 - `examples/background-jobs.ts`
 

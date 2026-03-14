@@ -251,6 +251,163 @@ export type TrackError = {
   message?: string;
 };
 
+export type ManualTraceUsage = Partial<Usage> & {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+};
+
+export type TokveraTraceProvider = "openai" | "anthropic" | "gemini" | "mistral" | "tokvera";
+
+export type TokveraTraceHandle = {
+  trace_id: string;
+  run_id: string;
+  span_id: string;
+  parent_span_id?: string;
+  started_at: number;
+  provider: TokveraTraceProvider;
+  event_type: string;
+  endpoint: string;
+  model?: string;
+  options: TrackOptions;
+};
+
+export type TokveraTracer = {
+  baseOptions: TrackOptions;
+  startTrace: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  startSpan: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  finishSpan: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  failSpan: (handle: TokveraTraceHandle, error: unknown, options?: ManualSpanFinishOptions) => void;
+  attachPayload: (
+    handle: TokveraTraceHandle,
+    payload:
+      | TracePayloadBlock
+      | TracePayloadBlock[]
+      | {
+          payload_type?: TracePayloadType;
+          content?: string;
+        }
+  ) => TokveraTraceHandle;
+  getTrackOptionsFromTraceContext: (
+    handle: TokveraTraceHandle,
+    overrides?: TrackOptions
+  ) => TrackOptions;
+};
+
+export type TokveraLifecycleAdapter = {
+  runtime: string;
+  tracer: TokveraTracer;
+  startRun: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  finishRun: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  failRun: (handle: TokveraTraceHandle, error: unknown, options?: ManualSpanFinishOptions) => void;
+  startTool: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  finishTool: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  failTool: (handle: TokveraTraceHandle, error: unknown, options?: ManualSpanFinishOptions) => void;
+  startModel: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  finishModel: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  failModel: (handle: TokveraTraceHandle, error: unknown, options?: ManualSpanFinishOptions) => void;
+  startNode: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  finishNode: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  failNode: (handle: TokveraTraceHandle, error: unknown, options?: ManualSpanFinishOptions) => void;
+  startBranch: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  finishBranch: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  failBranch: (handle: TokveraTraceHandle, error: unknown, options?: ManualSpanFinishOptions) => void;
+  getTrackOptionsFromTraceContext: (
+    handle: TokveraTraceHandle,
+    overrides?: TrackOptions
+  ) => TrackOptions;
+  attachPayload: TokveraTracer["attachPayload"];
+};
+
+export type TokveraOpenAIAgentsTracingProcessor = TokveraLifecycleAdapter & {
+  onAgentStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onAgentEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onAgentError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onToolStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onToolEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onToolError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onModelStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onModelEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onModelError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type TokveraLangGraphHooks = TokveraLifecycleAdapter & {
+  onGraphStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onGraphEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onGraphError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onNodeStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onNodeEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onNodeError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onBranchStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onBranchEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onBranchError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type ManualSpanStartOptions = TrackOptions & {
+  provider?: TokveraTraceProvider;
+  event_type?: string;
+  endpoint?: string;
+  model?: string;
+  usage?: ManualTraceUsage;
+};
+
+export type ManualSpanFinishOptions = TrackOptions & {
+  provider?: TokveraTraceProvider;
+  event_type?: string;
+  endpoint?: string;
+  model?: string;
+  usage?: ManualTraceUsage;
+  latency_ms?: number;
+  response?: unknown;
+  prompt?: unknown;
+  input?: unknown;
+};
+
+export type OTelAttributeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Array<string | number | boolean>;
+
+export type OTelReadableSpanLike = {
+  name?: string;
+  startTime?: [number, number];
+  endTime?: [number, number];
+  duration?: [number, number];
+  status?: { code?: number; message?: string };
+  attributes?: Record<string, OTelAttributeValue>;
+  resource?: { attributes?: Record<string, OTelAttributeValue> };
+  instrumentationScope?: { name?: string };
+  parentSpanId?: string;
+  spanContext?: () => { spanId?: string; traceId?: string };
+};
+
 type BaseTrackEvent = {
   schema_version: "2026-02-16" | "2026-04-01";
   status: "in_progress" | "success" | "failure";
@@ -289,4 +446,21 @@ export type GeminiTrackEvent = BaseTrackEvent & {
   endpoint: "models.generate_content";
 };
 
-export type TrackEvent = OpenAITrackEvent | AnthropicTrackEvent | GeminiTrackEvent;
+export type MistralTrackEvent = BaseTrackEvent & {
+  event_type: "mistral.request";
+  provider: "mistral";
+  endpoint: "chat.complete";
+};
+
+export type TokveraTraceEvent = BaseTrackEvent & {
+  event_type: "tokvera.trace";
+  provider: "tokvera";
+  endpoint: "manual.trace" | "manual.span" | "otel.span";
+};
+
+export type TrackEvent =
+  | OpenAITrackEvent
+  | AnthropicTrackEvent
+  | GeminiTrackEvent
+  | MistralTrackEvent
+  | TokveraTraceEvent;

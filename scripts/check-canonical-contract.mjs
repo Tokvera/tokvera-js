@@ -54,6 +54,14 @@ const PROVIDER_CONTRACTS = {
     event_type: "gemini.request",
     endpoints: ["models.generate_content"],
   },
+  mistral: {
+    event_type: "mistral.request",
+    endpoints: ["chat.complete"],
+  },
+  tokvera: {
+    event_type: "tokvera.trace",
+    endpoints: ["manual.trace", "manual.span", "otel.span"],
+  },
 };
 const USAGE_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"];
 const ERROR_FIELDS = ["type", "message"];

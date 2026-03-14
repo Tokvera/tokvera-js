@@ -28,6 +28,16 @@ import {
   type NextLikeRequest,
   type NextRouteContextOptions,
   type NestExecutionContextLike,
+  type ManualSpanFinishOptions,
+  type ManualSpanStartOptions,
+  type MistralTrackEvent,
+  type OTelReadableSpanLike,
+  type TokveraTraceEvent,
+  type TokveraTraceHandle,
+  type TokveraLifecycleAdapter,
+  type TokveraLangGraphHooks,
+  type TokveraOpenAIAgentsTracingProcessor,
+  type TokveraTracer,
   type BullMQJobLike,
 } from "./types.js";
 
@@ -71,6 +81,12 @@ type GeminiClientShape = {
   models: {
     generateContent?: AnyFunction;
     generate_content?: AnyFunction;
+  };
+};
+
+type MistralClientShape = {
+  chat: {
+    complete: AnyFunction;
   };
 };
 
@@ -242,6 +258,19 @@ const getGeminiUsage = (response: any): Usage => {
     usage?.candidatesTokenCount ?? usage?.candidates_token_count ?? usage?.completion_token_count
   );
   const totalTokens = toNonNegativeInt(usage?.totalTokenCount ?? usage?.total_token_count ?? promptTokens + completionTokens);
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  };
+};
+
+const getMistralUsage = (response: any): Usage => {
+  const usage = response?.usage ?? {};
+  const promptTokens = toNonNegativeInt(usage?.prompt_tokens ?? usage?.input_tokens);
+  const completionTokens = toNonNegativeInt(usage?.completion_tokens ?? usage?.output_tokens);
+  const totalTokens = toNonNegativeInt(usage?.total_tokens ?? promptTokens + completionTokens);
 
   return {
     prompt_tokens: promptTokens,
@@ -1610,6 +1639,593 @@ const sendWithRetry = async (event: TrackEvent, options: TrackOptions): Promise<
   };
 };
 
+const getManualUsage = (
+  usage: ManualSpanFinishOptions["usage"] | undefined,
+  metrics: TrackOptions["metrics"]
+): Usage => {
+  const promptTokens = toNonNegativeInt(
+    usage?.prompt_tokens ?? metrics?.prompt_tokens ?? 0
+  );
+  const completionTokens = toNonNegativeInt(
+    usage?.completion_tokens ?? metrics?.completion_tokens ?? 0
+  );
+  const totalTokens = toNonNegativeInt(
+    usage?.total_tokens ?? metrics?.total_tokens ?? promptTokens + completionTokens
+  );
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+  };
+};
+
+const getInheritedTraceOptions = (handle: TokveraTraceHandle): TrackOptions =>
+  withDefinedTrackOptions({
+    api_key: handle.options.api_key,
+    apiKey: handle.options.apiKey,
+    ingest_url: handle.options.ingest_url,
+    ingestUrl: handle.options.ingestUrl,
+    feature: handle.options.feature,
+    tenant_id: handle.options.tenant_id,
+    customer_id: handle.options.customer_id,
+    attempt_type: handle.options.attempt_type,
+    plan: handle.options.plan,
+    environment: handle.options.environment,
+    template_id: handle.options.template_id,
+    conversation_id: handle.options.conversation_id,
+    schema_version: handle.options.schema_version ?? handle.options.schemaVersion,
+    capture_content: handle.options.capture_content ?? handle.options.captureContent,
+    emit_lifecycle_events:
+      handle.options.emit_lifecycle_events ?? handle.options.emitLifecycleEvents,
+  });
+
+const resolveTraceContract = ({
+  provider,
+  eventType,
+  endpoint,
+}: {
+  provider?: ManualSpanStartOptions["provider"];
+  eventType?: string;
+  endpoint?: string;
+}) => {
+  const normalizedProvider = toTagValue(provider) ?? "tokvera";
+  if (normalizedProvider === "openai") {
+    return {
+      provider: "openai" as const,
+      event_type: toTagValue(eventType) ?? "openai.request",
+      endpoint: toTagValue(endpoint) ?? "responses.create",
+    };
+  }
+  if (normalizedProvider === "anthropic") {
+    return {
+      provider: "anthropic" as const,
+      event_type: toTagValue(eventType) ?? "anthropic.request",
+      endpoint: toTagValue(endpoint) ?? "messages.create",
+    };
+  }
+  if (normalizedProvider === "gemini") {
+    return {
+      provider: "gemini" as const,
+      event_type: toTagValue(eventType) ?? "gemini.request",
+      endpoint: toTagValue(endpoint) ?? "models.generate_content",
+    };
+  }
+  if (normalizedProvider === "mistral") {
+    return {
+      provider: "mistral" as const,
+      event_type: toTagValue(eventType) ?? "mistral.request",
+      endpoint: toTagValue(endpoint) ?? "chat.complete",
+    };
+  }
+  return {
+    provider: "tokvera" as const,
+    event_type: toTagValue(eventType) ?? "tokvera.trace",
+    endpoint: toTagValue(endpoint) ?? "manual.span",
+  };
+};
+
+const buildManualTrackEvent = ({
+  handle,
+  status,
+  overrides = {},
+  error,
+}: {
+  handle: TokveraTraceHandle;
+  status: TrackEvent["status"];
+  overrides?: ManualSpanFinishOptions;
+  error?: Error;
+}): { event: TrackEvent; options: TrackOptions } => {
+  const nextOptions = withDefinedTrackOptions({
+    ...handle.options,
+    ...overrides,
+    trace_id: handle.trace_id,
+    run_id: handle.run_id,
+    conversation_id: overrides.conversation_id ?? handle.options.conversation_id,
+    span_id: handle.span_id,
+    parent_span_id: handle.parent_span_id,
+  });
+  const baseTags = getTags(nextOptions);
+  const tags = status === "in_progress" ? stripTerminalTraceFields(baseTags) : baseTags;
+  const evaluation = status === "in_progress" ? undefined : getEvaluation(nextOptions);
+  const usage = getManualUsage(overrides.usage, nextOptions.metrics);
+  const latencyMs = toNonNegativeInt(
+    overrides.latency_ms ?? (status === "in_progress" ? 0 : Date.now() - handle.started_at)
+  );
+  const contract = resolveTraceContract({
+    provider: overrides.provider ?? handle.provider,
+    eventType: overrides.event_type ?? handle.event_type,
+    endpoint: overrides.endpoint ?? handle.endpoint,
+  });
+  const promptContent =
+    overrides.prompt !== undefined
+      ? toStableJson(overrides.prompt)
+      : overrides.input !== undefined
+        ? toStableJson(overrides.input)
+        : undefined;
+  const responseContent =
+    overrides.response !== undefined ? toStableJson(overrides.response) : undefined;
+
+  const baseEvent: TrackEvent = {
+    schema_version: TRACE_SCHEMA_VERSION_V1,
+    event_type: contract.event_type,
+    provider: contract.provider,
+    endpoint: contract.endpoint,
+    status,
+    timestamp: new Date().toISOString(),
+    latency_ms: latencyMs,
+    model: toTagValue(overrides.model) ?? handle.model ?? "manual",
+    usage,
+    tags,
+    evaluation,
+    error:
+      status === "failure"
+        ? {
+            type: error?.name,
+            message: error?.message,
+          }
+        : undefined,
+  } as TrackEvent;
+
+  return {
+    event: decorateEventWithTraceV2(baseEvent, {
+      options: nextOptions,
+      promptContent,
+      responseContent,
+    }),
+    options: nextOptions,
+  };
+};
+
+export const getTrackOptionsFromTraceContext = (
+  handle: TokveraTraceHandle,
+  overrides: TrackOptions = {}
+): TrackOptions =>
+  withDefinedTrackOptions({
+    ...getInheritedTraceOptions(handle),
+    ...overrides,
+    trace_id: toTagValue(overrides.trace_id) ?? handle.trace_id,
+    run_id: toTagValue(overrides.run_id) ?? handle.run_id,
+    conversation_id:
+      toTagValue(overrides.conversation_id) ?? handle.options.conversation_id,
+    parent_span_id: toTagValue(overrides.parent_span_id) ?? handle.span_id,
+    span_id: toTagValue(overrides.span_id) ?? generateSpanId(),
+  });
+
+const createTraceHandle = (
+  options: TrackOptions,
+  overrides: ManualSpanStartOptions = {},
+  parent?: TokveraTraceHandle
+): TokveraTraceHandle => {
+  const providerOverride = overrides.provider;
+  const contract = resolveTraceContract({
+    provider: providerOverride,
+    eventType: overrides.event_type,
+    endpoint:
+      overrides.endpoint ??
+      (typeof providerOverride === "string" && providerOverride !== "tokvera"
+        ? undefined
+        : parent
+          ? "manual.span"
+          : "manual.trace"),
+  });
+  const traceId =
+    toTagValue(overrides.trace_id) ??
+    parent?.trace_id ??
+    toTagValue(options.trace_id) ??
+    generateTraceId();
+  const runId =
+    toTagValue(overrides.run_id) ??
+    parent?.run_id ??
+    toTagValue(options.run_id) ??
+    generateRunId();
+  const parentSpanId =
+    toTagValue(overrides.parent_span_id) ??
+    (parent ? parent.span_id : toTagValue(options.parent_span_id));
+  const spanId = toTagValue(overrides.span_id) ?? generateSpanId();
+  const mergedOptions = withDefinedTrackOptions({
+    ...options,
+    ...overrides,
+    trace_id: traceId,
+    run_id: runId,
+    conversation_id:
+      toTagValue(overrides.conversation_id) ??
+      parent?.options.conversation_id ??
+      toTagValue(options.conversation_id),
+    span_id: spanId,
+    parent_span_id: parentSpanId,
+  });
+
+  return {
+    trace_id: traceId,
+    run_id: runId,
+    span_id: spanId,
+    parent_span_id: parentSpanId,
+    started_at: Date.now(),
+    provider: contract.provider,
+    event_type: contract.event_type,
+    endpoint: contract.endpoint,
+    model: toTagValue(overrides.model),
+    options: mergedOptions,
+  };
+};
+
+const emitTraceHandleEvent = (
+  handle: TokveraTraceHandle,
+  status: TrackEvent["status"],
+  overrides: ManualSpanFinishOptions = {},
+  error?: Error
+) => {
+  const { event, options } = buildManualTrackEvent({
+    handle,
+    status,
+    overrides,
+    error,
+  });
+  void sendWithRetry(event, options).then(logIngestFailure);
+};
+
+export const startTrace = (
+  baseOptions: TrackOptions = {},
+  options: ManualSpanStartOptions = {}
+): TokveraTraceHandle => {
+  const handle = createTraceHandle(withDefinedTrackOptions({ ...baseOptions }), options);
+  emitTraceHandleEvent(handle, "in_progress", {
+    ...options,
+    provider: handle.provider,
+    event_type: handle.event_type,
+    endpoint: handle.endpoint,
+    model: handle.model,
+    latency_ms: 0,
+  });
+  return handle;
+};
+
+export const startSpan = (
+  parent: TokveraTraceHandle,
+  options: ManualSpanStartOptions = {}
+): TokveraTraceHandle => {
+  const handle = createTraceHandle(getInheritedTraceOptions(parent), options, parent);
+  emitTraceHandleEvent(handle, "in_progress", {
+    ...options,
+    provider: handle.provider,
+    event_type: handle.event_type,
+    endpoint: handle.endpoint,
+    model: handle.model,
+    latency_ms: 0,
+  });
+  return handle;
+};
+
+export const finishSpan = (
+  handle: TokveraTraceHandle,
+  options: ManualSpanFinishOptions = {}
+): void => {
+  emitTraceHandleEvent(handle, "success", options);
+};
+
+export const failSpan = (
+  handle: TokveraTraceHandle,
+  error: unknown,
+  options: ManualSpanFinishOptions = {}
+): void => {
+  const normalized =
+    error instanceof Error ? error : new Error(typeof error === "string" ? error : "Span failed");
+  emitTraceHandleEvent(handle, "failure", options, normalized);
+};
+
+export const attachPayload = (
+  handle: TokveraTraceHandle,
+  payload:
+    | TracePayloadBlock
+    | TracePayloadBlock[]
+    | {
+        payload_type?: TracePayloadBlock["payload_type"];
+        content?: string;
+      }
+): TokveraTraceHandle => {
+  const currentBlocks = normalizeTracePayloadBlocks(
+    handle.options.payload_blocks ?? handle.options.payloadBlocks
+  );
+  const appended = normalizeTracePayloadBlocks(Array.isArray(payload) ? payload : [payload]);
+  handle.options = withDefinedTrackOptions({
+    ...handle.options,
+    payload_blocks: [...currentBlocks, ...appended],
+  });
+  return handle;
+};
+
+export const createTokveraTracer = (baseOptions: TrackOptions = {}): TokveraTracer => ({
+  baseOptions: withDefinedTrackOptions({ ...baseOptions }),
+  startTrace: (options = {}) => startTrace(baseOptions, options),
+  startSpan,
+  finishSpan,
+  failSpan,
+  attachPayload,
+  getTrackOptionsFromTraceContext,
+});
+
+const createLifecycleAdapter = (
+  runtime: string,
+  baseOptions: TrackOptions = {}
+): TokveraLifecycleAdapter => {
+  const tracer = createTokveraTracer({
+    ...baseOptions,
+    schema_version: baseOptions.schema_version ?? TRACE_SCHEMA_VERSION_V2,
+  });
+  const withStepDefaults = (
+    options: ManualSpanStartOptions = {},
+    stepName: string,
+    spanKind: ManualSpanStartOptions["span_kind"]
+  ): ManualSpanStartOptions => ({
+    step_name: toTagValue(options.step_name) ?? stepName,
+    span_kind: options.span_kind ?? spanKind,
+    ...options,
+  });
+
+  return {
+    runtime,
+    tracer,
+    startRun: (options = {}) =>
+      startTrace(
+        tracer.baseOptions,
+        withStepDefaults(options, `${runtime}_run`, "orchestrator")
+      ),
+    finishRun: finishSpan,
+    failRun: failSpan,
+    startTool: (parent, options = {}) =>
+      startSpan(parent, withStepDefaults(options, "tool_step", "tool")),
+    finishTool: finishSpan,
+    failTool: failSpan,
+    startModel: (parent, options = {}) =>
+      startSpan(parent, withStepDefaults(options, "model_step", "model")),
+    finishModel: finishSpan,
+    failModel: failSpan,
+    startNode: (parent, options = {}) =>
+      startSpan(parent, withStepDefaults(options, "graph_node", "orchestrator")),
+    finishNode: finishSpan,
+    failNode: failSpan,
+    startBranch: (parent, options = {}) =>
+      startSpan(parent, withStepDefaults(options, "branch_decision", "orchestrator")),
+    finishBranch: finishSpan,
+    failBranch: failSpan,
+    getTrackOptionsFromTraceContext,
+    attachPayload,
+  };
+};
+
+export const createTokveraOpenAIAgentsTracingProcessor = (
+  baseOptions: TrackOptions = {}
+): TokveraOpenAIAgentsTracingProcessor => {
+  const adapter = createLifecycleAdapter("openai_agents_sdk", baseOptions);
+  return {
+    ...adapter,
+    onAgentStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "agent_run",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onAgentEnd: adapter.finishRun,
+    onAgentError: adapter.failRun,
+    onToolStart: (parent, options = {}) =>
+      adapter.startTool(parent, {
+        step_name: toTagValue(options.step_name) ?? "tool_call",
+        span_kind: "tool",
+        ...options,
+      }),
+    onToolEnd: adapter.finishTool,
+    onToolError: adapter.failTool,
+    onModelStart: (parent, options = {}) =>
+      adapter.startModel(parent, {
+        step_name: toTagValue(options.step_name) ?? "model_call",
+        span_kind: "model",
+        ...options,
+      }),
+    onModelEnd: adapter.finishModel,
+    onModelError: adapter.failModel,
+  };
+};
+
+export const createTokveraLangGraphHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraLangGraphHooks => {
+  const adapter = createLifecycleAdapter("langgraph", baseOptions);
+  return {
+    ...adapter,
+    onGraphStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "langgraph_run",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onGraphEnd: adapter.finishRun,
+    onGraphError: adapter.failRun,
+    onNodeStart: (parent, options = {}) =>
+      adapter.startNode(parent, {
+        step_name: toTagValue(options.step_name) ?? "graph_node",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onNodeEnd: adapter.finishNode,
+    onNodeError: adapter.failNode,
+    onBranchStart: (parent, options = {}) =>
+      adapter.startBranch(parent, {
+        step_name: toTagValue(options.step_name) ?? "branch_decision",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onBranchEnd: adapter.finishBranch,
+    onBranchError: adapter.failBranch,
+  };
+};
+
+export class TokveraOTelSpanExporter {
+  readonly options: TrackOptions;
+
+  constructor(options: TrackOptions = {}) {
+    this.options = withDefinedTrackOptions({ ...options });
+  }
+
+  export(
+    spans: OTelReadableSpanLike[],
+    resultCallback?: (result: { code: number; error?: Error }) => void
+  ) {
+    const exports = (spans || []).map((span) => {
+      const spanContext = typeof span?.spanContext === "function" ? span.spanContext() : undefined;
+      const traceId = toTagValue(spanContext?.traceId) ?? generateTraceId();
+      const spanId = toTagValue(spanContext?.spanId) ?? generateSpanId();
+      const startTime = Array.isArray(span?.startTime)
+        ? span.startTime[0] * 1000 + span.startTime[1] / 1_000_000
+        : Date.now();
+      const endTime = Array.isArray(span?.endTime)
+        ? span.endTime[0] * 1000 + span.endTime[1] / 1_000_000
+        : Date.now();
+      const durationMs = Math.max(0, Math.round(endTime - startTime));
+      const attributes = span?.attributes ?? {};
+      const resourceAttributes = span?.resource?.attributes ?? {};
+      const provider = toTagValue(attributes["tokvera.provider"]) ?? "tokvera";
+      const model =
+        toTagValue(attributes["gen_ai.response.model"]) ??
+        toTagValue(attributes["llm.model_name"]) ??
+        "manual";
+      const usage = {
+        prompt_tokens: toNonNegativeInt(
+          attributes["gen_ai.usage.input_tokens"] ?? attributes["tokvera.prompt_tokens"]
+        ),
+        completion_tokens: toNonNegativeInt(
+          attributes["gen_ai.usage.output_tokens"] ?? attributes["tokvera.completion_tokens"]
+        ),
+        total_tokens: toNonNegativeInt(
+          attributes["tokvera.total_tokens"] ??
+            (Number(attributes["gen_ai.usage.input_tokens"] || 0) +
+              Number(attributes["gen_ai.usage.output_tokens"] || 0))
+        ),
+      };
+      const handle: TokveraTraceHandle = {
+        trace_id: traceId,
+        run_id: toTagValue(attributes["tokvera.run_id"]) ?? traceId.replace(/^trc_/, "run_"),
+        span_id: spanId,
+        parent_span_id: toTagValue(span.parentSpanId),
+        started_at: startTime,
+        provider: (provider as TokveraTraceHandle["provider"]) || "tokvera",
+        event_type: provider === "mistral" ? "mistral.request" : provider === "tokvera" ? "tokvera.trace" : `${provider}.request`,
+        endpoint:
+          toTagValue(attributes["tokvera.endpoint"]) ??
+          (provider === "tokvera" ? "otel.span" : "manual.span"),
+        model,
+        options: withDefinedTrackOptions({
+          ...this.options,
+          feature:
+            toTagValue(attributes["tokvera.feature"]) ??
+            toTagValue(resourceAttributes["service.name"]) ??
+            this.options.feature,
+          tenant_id: toTagValue(attributes["tokvera.tenant_id"]) ?? this.options.tenant_id,
+          customer_id: toTagValue(attributes["tokvera.customer_id"]) ?? this.options.customer_id,
+          environment:
+            toTagValue(resourceAttributes["deployment.environment"]) ?? this.options.environment,
+          trace_id: traceId,
+          run_id:
+            toTagValue(attributes["tokvera.run_id"]) ?? traceId.replace(/^trc_/, "run_"),
+          span_id: spanId,
+          parent_span_id: toTagValue(span.parentSpanId),
+          step_name: toTagValue(attributes["tokvera.step_name"]) ?? toTagValue(span.name),
+          span_kind:
+            toSpanKind(attributes["tokvera.span_kind"]) ??
+            (provider === "tokvera" ? "orchestrator" : "model"),
+          tool_name: toTagValue(attributes["tokvera.tool_name"]),
+          metrics: {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+            latency_ms: durationMs,
+            cost_usd: toOptionalFiniteNumber(attributes["tokvera.cost_usd"]),
+          },
+          decision: normalizeTraceDecision({
+            retry_reason: attributes["tokvera.retry_reason"],
+            fallback_reason: attributes["tokvera.fallback_reason"],
+            routing_reason: attributes["tokvera.routing_reason"],
+            route: attributes["tokvera.route"],
+          }),
+          payload_blocks: normalizeTracePayloadBlocks([
+            {
+              payload_type: "context",
+              content: toStableJson({
+                instrumentation_scope: span?.instrumentationScope?.name ?? null,
+                attributes,
+              }),
+            },
+          ]),
+        }),
+      };
+      return buildManualTrackEvent({
+        handle,
+        status: span?.status?.code === 2 ? "failure" : "success",
+        overrides: {
+          provider: handle.provider,
+          event_type: handle.event_type,
+          endpoint: handle.endpoint,
+          model,
+          usage,
+          latency_ms: durationMs,
+        },
+        error:
+          span?.status?.code === 2
+            ? new Error(
+                toTagValue(span?.status?.message) ?? `OpenTelemetry span ${span?.name || spanId} failed`
+              )
+            : undefined,
+      });
+    });
+
+    Promise.all(exports.map(({ event, options }) => sendWithRetry(event, options)))
+      .then((results) => {
+        const failed = results.find((result) => !result.ok);
+        if (failed) {
+          resultCallback?.({
+            code: 1,
+            error: new Error(failed.message),
+          });
+          return;
+        }
+        resultCallback?.({ code: 0 });
+      })
+      .catch((error) => {
+        resultCallback?.({
+          code: 1,
+          error: error instanceof Error ? error : new Error("Tokvera OTel export failed"),
+        });
+      });
+  }
+
+  shutdown() {
+    return Promise.resolve();
+  }
+
+  forceFlush() {
+    return Promise.resolve();
+  }
+}
+
 const wrapCreate = (
   originalCreate: AnyFunction,
   contract: EventContract,
@@ -1778,6 +2394,31 @@ export const trackGemini = <T extends GeminiClientShape>(
   return wrapper;
 };
 
+export const trackMistral = <T extends MistralClientShape>(
+  mistralClient: T,
+  options: TrackOptions = {}
+): T => {
+  const wrapper = Object.create(mistralClient) as T;
+  const complete = mistralClient.chat.complete.bind(mistralClient.chat);
+
+  wrapper.chat = {
+    ...mistralClient.chat,
+    complete: wrapCreate(
+      complete,
+      {
+        provider: "mistral",
+        event_type: "mistral.request",
+        endpoint: "chat.complete",
+        usageFromResponse: getMistralUsage,
+        modelFromResponse: (response) => response?.model,
+      },
+      options
+    ),
+  } as T["chat"];
+
+  return wrapper;
+};
+
 export type {
   AnthropicTrackEvent,
   BackgroundJobContext,
@@ -1795,11 +2436,21 @@ export type {
   ExpressMiddlewareOptions,
   ExpressValueResolver,
   GeminiTrackEvent,
+  ManualSpanFinishOptions,
+  ManualSpanStartOptions,
+  MistralTrackEvent,
+  OTelReadableSpanLike,
   OpenAITrackEvent,
+  TokveraLifecycleAdapter,
+  TokveraLangGraphHooks,
+  TokveraOpenAIAgentsTracingProcessor,
   TrackEvaluation,
   TrackEvent,
   TrackOptions,
   TrackTags,
+  TokveraTraceEvent,
+  TokveraTraceHandle,
+  TokveraTracer,
   Usage,
   VercelAICallParams,
   VercelAIResult,
