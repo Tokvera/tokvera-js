@@ -34,9 +34,15 @@ import {
   type OTelReadableSpanLike,
   type TokveraTraceEvent,
   type TokveraTraceHandle,
+  type TokveraAutoGenHooks,
   type TokveraLifecycleAdapter,
   type TokveraLangGraphHooks,
+  type TokveraLiveKitHooks,
+  type TokveraMastraHooks,
   type TokveraOpenAIAgentsTracingProcessor,
+  type TokveraOpenAICompatibleGatewayHooks,
+  type TokveraPipecatHooks,
+  type TokveraTemporalHooks,
   type TokveraTracer,
   type BullMQJobLike,
 } from "./types.js";
@@ -2079,6 +2085,164 @@ export const createTokveraLangGraphHooks = (
   };
 };
 
+export const createTokveraAutoGenHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraAutoGenHooks => {
+  const adapter = createLifecycleAdapter("autogen", baseOptions);
+  return {
+    ...adapter,
+    onConversationStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "autogen_conversation",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onConversationEnd: adapter.finishRun,
+    onConversationError: adapter.failRun,
+    onAgentStart: (parent, options = {}) =>
+      adapter.startNode(parent, {
+        step_name: toTagValue(options.step_name) ?? "agent_turn",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onAgentEnd: adapter.finishNode,
+    onAgentError: adapter.failNode,
+  };
+};
+
+export const createTokveraMastraHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraMastraHooks => {
+  const adapter = createLifecycleAdapter("mastra", baseOptions);
+  return {
+    ...adapter,
+    onWorkflowStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "mastra_workflow",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onWorkflowEnd: adapter.finishRun,
+    onWorkflowError: adapter.failRun,
+    onStepStart: (parent, options = {}) =>
+      adapter.startNode(parent, {
+        step_name: toTagValue(options.step_name) ?? "workflow_step",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onStepEnd: adapter.finishNode,
+    onStepError: adapter.failNode,
+  };
+};
+
+export const createTokveraTemporalHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraTemporalHooks => {
+  const adapter = createLifecycleAdapter("temporal", baseOptions);
+  return {
+    ...adapter,
+    onWorkflowStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "temporal_workflow",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onWorkflowEnd: adapter.finishRun,
+    onWorkflowError: adapter.failRun,
+    onActivityStart: (parent, options = {}) =>
+      adapter.startTool(parent, {
+        step_name: toTagValue(options.step_name) ?? "workflow_activity",
+        span_kind: "tool",
+        ...options,
+      }),
+    onActivityEnd: adapter.finishTool,
+    onActivityError: adapter.failTool,
+  };
+};
+
+export const createTokveraPipecatHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraPipecatHooks => {
+  const adapter = createLifecycleAdapter("pipecat", baseOptions);
+  return {
+    ...adapter,
+    onTurnStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "voice_turn",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onTurnEnd: adapter.finishRun,
+    onTurnError: adapter.failRun,
+    onTranscriptionStart: (parent, options = {}) =>
+      adapter.startModel(parent, {
+        step_name: toTagValue(options.step_name) ?? "speech_to_text",
+        span_kind: "model",
+        ...options,
+      }),
+    onTranscriptionEnd: adapter.finishModel,
+    onTranscriptionError: adapter.failModel,
+  };
+};
+
+export const createTokveraLiveKitHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraLiveKitHooks => {
+  const adapter = createLifecycleAdapter("livekit", baseOptions);
+  return {
+    ...adapter,
+    onSessionStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "livekit_session",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onSessionEnd: adapter.finishRun,
+    onSessionError: adapter.failRun,
+    onTurnStart: (parent, options = {}) =>
+      adapter.startModel(parent, {
+        step_name: toTagValue(options.step_name) ?? "voice_turn",
+        span_kind: "model",
+        ...options,
+      }),
+    onTurnEnd: adapter.finishModel,
+    onTurnError: adapter.failModel,
+  };
+};
+
+export const createTokveraOpenAICompatibleGatewayHooks = (
+  baseOptions: TrackOptions = {}
+): TokveraOpenAICompatibleGatewayHooks => {
+  const adapter = createLifecycleAdapter("openai_compatible_gateway", baseOptions);
+  return {
+    ...adapter,
+    onRequestStart: (options = {}) =>
+      adapter.startRun({
+        step_name: toTagValue(options.step_name) ?? "gateway_request",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onRequestEnd: adapter.finishRun,
+    onRequestError: adapter.failRun,
+    onDownstreamStart: (parent, options = {}) =>
+      adapter.startModel(parent, {
+        step_name: toTagValue(options.step_name) ?? "downstream_provider_call",
+        span_kind: "model",
+        ...options,
+      }),
+    onDownstreamEnd: adapter.finishModel,
+    onDownstreamError: adapter.failModel,
+    onFallbackStart: (parent, options = {}) =>
+      adapter.startBranch(parent, {
+        step_name: toTagValue(options.step_name) ?? "fallback_route",
+        span_kind: "orchestrator",
+        ...options,
+      }),
+    onFallbackEnd: adapter.finishBranch,
+    onFallbackError: adapter.failBranch,
+  };
+};
+
 export class TokveraOTelSpanExporter {
   readonly options: TrackOptions;
 
@@ -2441,9 +2605,15 @@ export type {
   MistralTrackEvent,
   OTelReadableSpanLike,
   OpenAITrackEvent,
+  TokveraAutoGenHooks,
   TokveraLifecycleAdapter,
   TokveraLangGraphHooks,
+  TokveraLiveKitHooks,
+  TokveraMastraHooks,
   TokveraOpenAIAgentsTracingProcessor,
+  TokveraOpenAICompatibleGatewayHooks,
+  TokveraPipecatHooks,
+  TokveraTemporalHooks,
   TrackEvaluation,
   TrackEvent,
   TrackOptions,

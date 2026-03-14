@@ -367,6 +367,124 @@ export type TokveraLangGraphHooks = TokveraLifecycleAdapter & {
   ) => void;
 };
 
+export type TokveraAutoGenHooks = TokveraLifecycleAdapter & {
+  onConversationStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onConversationEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onConversationError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onAgentStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onAgentEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onAgentError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type TokveraMastraHooks = TokveraLifecycleAdapter & {
+  onWorkflowStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onWorkflowEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onWorkflowError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onStepStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onStepEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onStepError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type TokveraTemporalHooks = TokveraLifecycleAdapter & {
+  onWorkflowStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onWorkflowEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onWorkflowError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onActivityStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onActivityEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onActivityError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type TokveraPipecatHooks = TokveraLifecycleAdapter & {
+  onTurnStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onTurnEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onTurnError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onTranscriptionStart: (
+    parent: TokveraTraceHandle,
+    options?: ManualSpanStartOptions
+  ) => TokveraTraceHandle;
+  onTranscriptionEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onTranscriptionError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type TokveraLiveKitHooks = TokveraLifecycleAdapter & {
+  onSessionStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onSessionEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onSessionError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onTurnStart: (parent: TokveraTraceHandle, options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onTurnEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onTurnError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
+export type TokveraOpenAICompatibleGatewayHooks = TokveraLifecycleAdapter & {
+  onRequestStart: (options?: ManualSpanStartOptions) => TokveraTraceHandle;
+  onRequestEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onRequestError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onDownstreamStart: (
+    parent: TokveraTraceHandle,
+    options?: ManualSpanStartOptions
+  ) => TokveraTraceHandle;
+  onDownstreamEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onDownstreamError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+  onFallbackStart: (
+    parent: TokveraTraceHandle,
+    options?: ManualSpanStartOptions
+  ) => TokveraTraceHandle;
+  onFallbackEnd: (handle: TokveraTraceHandle, options?: ManualSpanFinishOptions) => void;
+  onFallbackError: (
+    handle: TokveraTraceHandle,
+    error: unknown,
+    options?: ManualSpanFinishOptions
+  ) => void;
+};
+
 export type ManualSpanStartOptions = TrackOptions & {
   provider?: TokveraTraceProvider;
   event_type?: string;

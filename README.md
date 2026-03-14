@@ -70,6 +70,13 @@ Framework/runtime helpers shipped in this SDK:
   - `createTokveraOpenAIAgentsTracingProcessor(...)`
 - LangGraph:
   - `createTokveraLangGraphHooks(...)`
+- Wave 2 beta runtimes:
+  - `createTokveraAutoGenHooks(...)`
+  - `createTokveraMastraHooks(...)`
+  - `createTokveraTemporalHooks(...)`
+  - `createTokveraPipecatHooks(...)`
+  - `createTokveraLiveKitHooks(...)`
+  - `createTokveraOpenAICompatibleGatewayHooks(...)`
 - OpenTelemetry bridge:
   - `TokveraOTelSpanExporter`
 
@@ -114,6 +121,7 @@ Contract references:
 - `examples/quickstart.ts`
 - `examples/manual-tracer.ts`
 - `examples/openai-agents.ts`
+- `examples/beta-runtime-helpers.ts`
 - `examples/express-middleware.ts`
 - `examples/background-jobs.ts`
 
