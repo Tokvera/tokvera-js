@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createTokveraOpenAICompatibleGatewayHooks,
   TokveraOTelSpanExporter,
   createTokveraTracer,
   finishSpan,
   getTrackOptionsFromTraceContext,
   startSpan,
   startTrace,
+  trackOpenAI,
   trackMistral,
 } from "../src/index.js";
 
@@ -157,5 +159,121 @@ describe("manual tracer substrate", () => {
     expect(event.provider).toBe("openai");
     expect(event.usage.total_tokens).toBe(19);
     expect(event.payload_blocks?.[0]?.payload_type).toBe("context");
+  });
+
+  it("does not double-emit when manual tracer composes with OpenAI wrapper", async () => {
+    const response = {
+      id: "resp_1",
+      model: "gpt-4o-mini",
+      usage: { prompt_tokens: 6, completion_tokens: 4, total_tokens: 10 },
+    };
+    const openaiClient = {
+      chat: { completions: { create: vi.fn() } },
+      responses: { create: vi.fn().mockResolvedValue(response) },
+    };
+
+    const tracer = createTokveraTracer({
+      api_key: "project_key_123",
+      feature: "mixed_manual_openai",
+      tenant_id: "tenant_1",
+      emit_lifecycle_events: true,
+      capture_content: true,
+    });
+
+    const root = startTrace(tracer.baseOptions, {
+      step_name: "gateway_request",
+      model: "router",
+      span_kind: "orchestrator",
+    });
+    const downstream = startSpan(root, {
+      step_name: "downstream_provider_call",
+      provider: "tokvera",
+      model: "provider-router",
+      span_kind: "model",
+    });
+    const tracked = trackOpenAI(openaiClient, {
+      ...getTrackOptionsFromTraceContext(downstream, {
+        step_name: "downstream_provider_call",
+        span_kind: "model",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        emit_lifecycle_events: true,
+        capture_content: true,
+      }),
+    });
+
+    await tracked.responses.create({ model: "gpt-4o-mini", input: "Return a short answer." });
+    finishSpan(downstream, { response: { status: "completed" } });
+    finishSpan(root, { response: { status: "completed" } });
+
+    await flushPromises();
+
+    const events = (globalThis.fetch as any).mock.calls.map((call: any) => JSON.parse(call[1].body));
+    expect(events).toHaveLength(6);
+
+    const keys = new Set(events.map((event: any) => `${event.tags.trace_id}:${event.tags.span_id}:${event.status}`));
+    expect(keys.size).toBe(events.length);
+
+    const spanIds = new Set(events.map((event: any) => event.tags.span_id));
+    expect(spanIds.size).toBe(3);
+
+    const terminalProviderEvent = events.find((event: any) => event.provider === "openai" && event.status === "success");
+    expect(terminalProviderEvent.tags.parent_span_id).toBe(downstream.span_id);
+    expect(terminalProviderEvent.tags.trace_id).toBe(root.trace_id);
+  });
+
+  it("keeps gateway helper, provider wrapper, and fallback branch under one trace without duplicate status events", async () => {
+    const response = {
+      id: "resp_2",
+      model: "gpt-4o-mini",
+      usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+    };
+    const openaiClient = {
+      chat: { completions: { create: vi.fn() } },
+      responses: { create: vi.fn().mockResolvedValue(response) },
+    };
+    const gateway = createTokveraOpenAICompatibleGatewayHooks({
+      api_key: "project_key_123",
+      feature: "gateway_composition",
+      tenant_id: "tenant_1",
+      emit_lifecycle_events: true,
+      capture_content: true,
+    });
+
+    const request = gateway.onRequestStart({ step_name: "gateway_request", model: "router" });
+    const downstream = gateway.onDownstreamStart(request, {
+      step_name: "downstream_provider_call",
+      provider: "tokvera",
+      model: "provider-router",
+    });
+    const tracked = trackOpenAI(openaiClient, {
+      ...gateway.getTrackOptionsFromTraceContext(downstream, {
+        step_name: "downstream_provider_call",
+        span_kind: "model",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        emit_lifecycle_events: true,
+      }),
+    });
+
+    await tracked.responses.create({ model: "gpt-4o-mini", input: "Return a short answer." });
+    gateway.onDownstreamEnd(downstream, { response: { output_text: "ok" } });
+    const fallback = gateway.onFallbackStart(request, {
+      step_name: "fallback_route",
+      decision: { fallback_reason: "rate_limit", route: "anthropic" },
+    });
+    gateway.onFallbackEnd(fallback, { response: { route: "anthropic" } });
+    gateway.onRequestEnd(request, { response: { status: "completed" } });
+
+    await flushPromises();
+
+    const events = (globalThis.fetch as any).mock.calls.map((call: any) => JSON.parse(call[1].body));
+    const keys = new Set(events.map((event: any) => `${event.tags.trace_id}:${event.tags.span_id}:${event.status}`));
+    expect(keys.size).toBe(events.length);
+
+    const traceIds = new Set(events.map((event: any) => event.tags.trace_id));
+    expect(traceIds.size).toBe(1);
+    const terminalFallback = events.find((event: any) => event.tags.step_name === "fallback_route" && event.status === "success");
+    expect(terminalFallback.decision.route).toBe("anthropic");
   });
 });
