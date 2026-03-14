@@ -1,6 +1,6 @@
 {
   "name": "@tokvera/sdk",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Tokvera TypeScript SDK for provider tracking, manual tracing, and runtime integrations.",
   "license": "MIT",
   "type": "module",

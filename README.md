@@ -2,7 +2,7 @@
 
 JavaScript SDK for Tokvera AI cost and trace telemetry.
 
-Current version: `0.2.8`
+Current version: `0.2.9`
 
 ## What It Tracks
 

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.9] - 2026-03-14
+
+### Added
+- Wave 2 runtime helper adapters:
+  - `createTokveraAutoGenHooks(...)`
+  - `createTokveraMastraHooks(...)`
+  - `createTokveraTemporalHooks(...)`
+  - `createTokveraPipecatHooks(...)`
+  - `createTokveraLiveKitHooks(...)`
+  - `createTokveraOpenAICompatibleGatewayHooks(...)`
+- New example: `examples/beta-runtime-helpers.ts`.
+
+### Changed
+- Runtime helper tests now cover the Wave 2 lifecycle adapter set.
+
 ## [0.2.8] - 2026-03-14
 
 ### Added
